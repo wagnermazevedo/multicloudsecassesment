@@ -1,0 +1,38 @@
+version: 0.2
+
+env:
+  variables:
+    ECR_REPO: "057959860487.dkr.ecr.us-east-1.amazonaws.com/prowler-repo"
+
+phases:
+  install:
+    commands:
+      - echo "=== Instalando dependencias ==="
+      - apt-get update -y
+      - apt-get install -y unzip curl
+      - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+      - unzip awscliv2.zip
+      - sudo ./aws/install --bin-dir /usr/bin --install-dir /usr/aws-cli
+      - aws --version
+
+  pre_build:
+    commands:
+      - echo "=== Login no ECR ==="
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$ECR_REPO"
+      - echo "=== Usando Dockerfile da raiz ==="
+      #- export DOCKERFILE_PATH="/codebuild_docker_build/Dockerfile"
+
+  build:
+    commands:
+      - echo "=== Construindo imagem Docker ==="
+      - docker build -t prowler-repo -f Dockerfile.prowler .
+      - docker tag prowler-repo:latest "$ECR_REPO:latest"
+
+  post_build:
+    commands:
+      - echo "=== Publicando imagem no ECR ==="
+      - docker push "$ECR_REPO:latest"
+      - echo "=== Build concluido ==="
+
+artifacts:
+  files: []
