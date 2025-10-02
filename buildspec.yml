@@ -20,7 +20,6 @@ phases:
       - echo "=== Login no ECR ==="
       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$ECR_REPO"
       - echo "=== Usando Dockerfile da raiz ==="
-      #- export DOCKERFILE_PATH="/codebuild_docker_build/Dockerfile"
 
   build:
     commands:
