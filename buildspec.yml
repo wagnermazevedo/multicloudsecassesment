@@ -2,7 +2,7 @@ version: 0.2
 
 env:
   variables:
-    ECR_REPO: "057959860487.dkr.ecr.us-east-1.amazonaws.com/prowler-repo"
+    ECR_REPO: "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo"
 
 phases:
   install:
