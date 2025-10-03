@@ -7,19 +7,14 @@ env:
 phases:
   install:
     commands:
-      - echo "=== Instalando dependencias ==="
-      - apt-get update -y
-      - apt-get install -y unzip curl
-      - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
-      - unzip awscliv2.zip
-      - sudo ./aws/install --bin-dir /usr/bin --install-dir /usr/aws-cli
+      - echo "=== Fase INSTALL ==="
       - aws --version
+      - docker --version
 
   pre_build:
     commands:
       - echo "=== Login no ECR ==="
       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$ECR_REPO"
-      - echo "=== Usando Dockerfile da raiz ==="
 
   build:
     commands:
@@ -31,7 +26,7 @@ phases:
     commands:
       - echo "=== Publicando imagem no ECR ==="
       - docker push "$ECR_REPO:latest"
-      - echo "=== Build concluido ==="
+      - echo "=== Build concluído com sucesso ==="
 
 artifacts:
   files: []
