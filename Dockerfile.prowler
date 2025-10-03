@@ -1,13 +1,13 @@
-FROM public.ecr.aws/docker/library/amazonlinux:2
+# Usa a imagem oficial do Prowler do ECR público
+FROM public.ecr.aws/prowler/prowler:latest
 
-# Instala dependências
-RUN yum install -y unzip tar gzip python3 jq awscli git && \
-    pip3 install prowler && \
-    yum clean all
+# Instala ferramentas extras se precisar (opcional)
+RUN yum install -y jq awscli git && yum clean all
 
-# Copia seu script para dentro do container
+# Copia seu script customizado
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN chmod +x /usr/local/bin/run-prowler.sh
 
-# Define entrypoint
+# Define entrypoint para rodar seu script
 ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
+
