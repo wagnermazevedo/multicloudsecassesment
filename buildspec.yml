@@ -8,7 +8,7 @@ env:
 phases:
   install:
     commands:
-      - echo "=== Atualizando pacotes e instalando dependências ==="
+      - echo "=== Instalando dependências no ambiente de build ==="
       - apt-get update -y
       - apt-get install -y unzip curl jq awscli docker.io
       - aws --version
