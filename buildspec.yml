@@ -2,31 +2,36 @@ version: 0.2
 
 env:
   variables:
+    AWS_REGION: "us-east-1"
     ECR_REPO: "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo"
 
 phases:
   install:
     commands:
-      - echo "=== Fase INSTALL ==="
+      - echo "=== [INSTALL] Validando ambiente AWS CodeBuild ==="
       - aws --version
       - docker --version
 
   pre_build:
     commands:
-      - echo "=== Login no ECR ==="
-      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$ECR_REPO"
+      - echo "=== [PRE_BUILD] Login no ECR ==="
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
+      - echo "=== Repositório ECR configurado: $ECR_REPO ==="
 
   build:
     commands:
-      - echo "=== Construindo imagem Docker ==="
+      - echo "=== [BUILD] Construindo imagem baseada no ECR público da AWS ==="
+      # Aqui usamos a imagem oficial do prowler no ECR público da AWS
       - docker build -t prowler-repo -f Dockerfile.prowler .
-      - docker tag prowler-repo:latest "$ECR_REPO:latest"
+      - docker tag prowler-repo:latest $ECR_REPO:latest
+      - docker tag prowler-repo:latest $ECR_REPO:dev
 
   post_build:
     commands:
-      - echo "=== Publicando imagem no ECR ==="
-      - docker push "$ECR_REPO:latest"
-      - echo "=== Build concluído com sucesso ==="
+      - echo "=== [POST_BUILD] Publicando imagem no ECR ==="
+      - docker push $ECR_REPO:latest
+      - docker push $ECR_REPO:dev
+      - echo "=== Build concluído e imagem publicada no ECR ==="
 
 artifacts:
   files: []
