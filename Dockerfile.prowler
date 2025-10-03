@@ -2,7 +2,7 @@
 FROM public.ecr.aws/prowler-cloud/prowler:latest
 
 # Instala ferramentas extras necessárias (se o script run-prowler.sh exigir)
-RUN yum install -y jq awscli git && yum clean all
+RUN apt-get install -y jq awscli git && yum clean all
 
 # Copia seu script pro container
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
