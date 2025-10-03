@@ -21,7 +21,6 @@ phases:
   build:
     commands:
       - echo "=== [BUILD] Construindo imagem baseada no ECR público da AWS ==="
-      # Aqui usamos a imagem oficial do prowler no ECR público da AWS
       - docker build -t prowler-repo -f Dockerfile.prowler .
       - docker tag prowler-repo:latest $ECR_REPO:latest
       - docker tag prowler-repo:latest $ECR_REPO:dev
