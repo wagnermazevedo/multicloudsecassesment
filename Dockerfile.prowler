@@ -1,12 +1,13 @@
-# Usa a imagem pública do Prowler no ECR público da AWS
+# Usa a imagem pública oficial do Prowler no ECR da AWS
 FROM public.ecr.aws/prowler-cloud/prowler:latest
 
-# Instala ferramentas extras necessárias (se o script run-prowler.sh exigir)
-RUN apt-get install -y jq awscli git && yum clean all
+# Instala somente o que o script run-prowler.sh precisa em runtime
+RUN apt-get update -y && \
+    apt-get install -y jq awscli && \
+    apt-get clean
 
-# Copia seu script pro container
+# Copia o script de execução
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN chmod +x /usr/local/bin/run-prowler.sh
 
-# Define entrypoint
 ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
