@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 
 # === Validação ===
 RUN echo "🔍 Validando instalação do Prowler..." && \
-    which prowler && prowler --version || (echo "❌ Falha ao validar Prowler" && exit 1)
+    which prowler && sleep 15 && prowler --version || (echo "❌ Falha ao validar Prowler" && exit 1)
 
 # === Copia o script principal ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
