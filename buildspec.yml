@@ -7,10 +7,8 @@ env:
 
 phases:
   install:
-    runtime-versions:
-      docker: 20
     commands:
-      - echo "=== Instalando dependências no ambiente de build ==="
+      - echo "=== Verificando ambiente ==="
       - aws --version
       - docker --version
 
@@ -20,20 +18,18 @@ phases:
       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$ECR_REPO"
 
   build:
-    privileged: true
     commands:
       - echo "=== Construindo imagem Docker (forçando rebuild limpo) ==="
       - docker build --no-cache -t prowler-repo -f Dockerfile.prowler .
-      - echo "=== Verificando binário Prowler dentro da imagem ==="
+      - echo "=== Validando binário Prowler dentro da imagem ==="
       - docker run --rm prowler-repo which prowler || (echo "❌ Prowler não encontrado!" && exit 1)
-      - docker run --rm prowler-repo prowler -v || echo "⚠️ Prowler não executou corretamente"
       - docker tag prowler-repo:latest "$ECR_REPO:latest"
 
   post_build:
     commands:
       - echo "=== Publicando imagem no ECR ==="
       - docker push "$ECR_REPO:latest"
-      - echo "=== Build concluído com sucesso ==="
+      - echo "✅ Build concluído com sucesso ==="
 
 artifacts:
   files: []
