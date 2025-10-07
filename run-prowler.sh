@@ -1,31 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-# === LOCALIZAÇÃO E INSTALAÇÃO DO PROWLER (Início) ===
+# === DIAGNÓSTICO INICIAL (Removendo a Lógica de Instalação e Path) ===
+
+# O bloco de 21 linhas de 'LOCALIZAÇÃO E INSTALAÇÃO DO PROWLER' foi REMOVIDO.
+# O Dockerfile garante a instalação do Prowler em /usr/local/bin.
+
+# 1. Teste de Sanidade Final (Novo)
 if ! command -v prowler &> /dev/null; then
-    echo "⚠️ Prowler não encontrado. Tentando instalar via pip..."
-    if ! pip install prowler-cli --quiet; then
-        echo "❌ Falha ao instalar prowler-cli via pip. Abortando."
-        exit 1
-    fi
-    export PATH="$PATH:/root/.local/bin:/home/prowler/.local/bin"
-    echo "🔧 PATH temporário ajustado para incluir ~/.local/bin."
-fi
-
-PROWLER_BIN_PATH=$(command -v prowler || true)
-if [ -z "$PROWLER_BIN_PATH" ]; then
-    echo "❌ Prowler não encontrado após instalação. Abortando."
-    exit 1
-fi
-
-if [[ "$PROWLER_BIN_PATH" != "/usr/local/bin/prowler" ]]; then
-    echo "🔗 Criando link simbólico: $PROWLER_BIN_PATH -> /usr/local/bin/prowler"
-    ln -sf "$PROWLER_BIN_PATH" /usr/local/bin/prowler || true
-    chmod +x "$PROWLER_BIN_PATH" || true
-fi
-
-if ! command -v prowler &> /dev/null; then
-    echo "❌ 'prowler' ainda não é executável. Abortando."
+    echo "❌ Erro Crítico: 'prowler' não encontrado no PATH! O Dockerfile falhou na instalação."
     exit 1
 fi
 
@@ -49,6 +32,7 @@ OUTPUTS=()
 
 CLOUD_PROVIDER=$(echo "$CLOUD_PROVIDER" | tr '[:upper:]' '[:lower:]')
 
+# === Função de upload para S3 ===
 upload_to_s3() {
     local file="$1"
     local account="$2"
@@ -60,6 +44,7 @@ upload_to_s3() {
     }
 }
 
+# === Função genérica de execução ===
 run_prowler_generic() {
     local provider="$1"
     local id="$2"
@@ -69,6 +54,7 @@ run_prowler_generic() {
     echo "🚀 Executando Prowler para ${provider^^} → $id"
     local OUT_FILE="${OUTPUT_DIR}/prowler-output-${id}-${TIMESTAMP}.json"
 
+    # Chamada direta e limpa para 'prowler' (Linha 59 na versão original)
     prowler "$provider" "${extra_args[@]}" \
         --output-formats json-asff \
         --output-filename "$(basename "$OUT_FILE" .json)" \
