@@ -1,34 +1,27 @@
-# Usa a imagem oficial do Prowler
-FROM public.ecr.aws/prowler-cloud/prowler:latest
+# Usa uma base leve com Python
+FROM python:3.11-slim
 
 USER root
 
-# 🧭 Confirma que o Prowler está instalado e acessível
-RUN echo "🔎 Verificando binário Prowler na imagem base..." && \
-    find / -type f -name prowler -executable 2>/dev/null | tee /tmp/prowler_paths.txt && \
-    if [ ! -s /tmp/prowler_paths.txt ]; then \
-      echo "⚠️ Binário não encontrado, instalando via pip..." && \
-      pip install prowler && \
-      ln -sf "$(which prowler)" /usr/local/bin/prowler; \
-    else \
-      PROWLER_PATH=$(head -n 1 /tmp/prowler_paths.txt) && \
-      echo "✅ Prowler encontrado em: $PROWLER_PATH" && \
-      ln -sf "$PROWLER_PATH" /usr/local/bin/prowler && \
-      chmod +x /usr/local/bin/prowler; \
-    fi && \
-    which prowler && prowler --version || echo "⚠️ Não foi possível exibir versão."
-
-# Instala utilitários necessários
+# === Instala dependências básicas ===
 RUN apt-get update -y && \
-    apt-get install -y jq awscli git && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    apt-get install -y jq awscli git curl unzip && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copia seu script principal
+# === Instala o prowler via pip ===
+RUN pip install --no-cache-dir prowler && \
+    ln -sf "$(which prowler)" /usr/local/bin/prowler && \
+    chmod +x /usr/local/bin/prowler
+
+# === Verificação ===
+RUN echo "🔎 Verificando instalação do Prowler..." && \
+    which prowler && prowler --version || (echo "❌ Erro ao validar instalação" && exit 1)
+
+# === Copia o script principal ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN chmod +x /usr/local/bin/run-prowler.sh
 
-# Define o PATH explicitamente
-ENV PATH="/usr/local/bin:/usr/bin:/bin:/opt/prowler:${PATH}"
+# === Define o PATH e entrypoint ===
+ENV PATH="/usr/local/bin:/usr/bin:/bin:/root/.local/bin:${PATH}"
 
-# Define entrypoint para o script
 ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
