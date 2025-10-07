@@ -7,14 +7,14 @@ env:
     AWS_ACCOUNT_ID: "057959860487"
     ECR_REPO_NAME: "multicloud-prowler-repo"
     IMAGE_TAG: "latest"
-    FULL_ECR_URI: "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
 
 phases:
   install:
     commands:
       - echo "=== Validando ambiente CodeBuild ==="
-      - echo "Região: $AWS_REGION | Conta: $AWS_ACCOUNT_ID"
       - export FULL_ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+      - echo "Região: $AWS_REGION | Conta: $AWS_ACCOUNT_ID"
+      - echo "ECR URI: $FULL_ECR_URI"
       - aws --version || (echo "❌ AWS CLI não encontrada" && exit 1)
       - docker --version || (echo "❌ Docker não encontrado" && exit 1)
       - echo "=== Testando credenciais AWS ==="
@@ -25,6 +25,7 @@ phases:
   pre_build:
     commands:
       - echo "=== Login no Amazon ECR (pré-build) ==="
+      - export FULL_ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
       - echo "Autenticando na conta $AWS_ACCOUNT_ID na região $AWS_REGION"
       - aws --version
       - docker --version
@@ -33,12 +34,14 @@ phases:
   build:
     commands:
       - echo "=== Construindo imagem Docker ==="
+      - export FULL_ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
       - docker build -t "$ECR_REPO_NAME:latest" -f Dockerfile.prowler .
       - docker tag "$ECR_REPO_NAME:latest" "$FULL_ECR_URI/$ECR_REPO_NAME:$IMAGE_TAG"
 
   post_build:
     commands:
       - echo "=== Publicando imagem no Amazon ECR ==="
+      - export FULL_ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
       - TIMESTAMP_TAG=$(date +%Y%m%d%H%M%S)
       - docker tag "$ECR_REPO_NAME:latest" "$FULL_ECR_URI/$ECR_REPO_NAME:$TIMESTAMP_TAG"
       - docker push "$FULL_ECR_URI/$ECR_REPO_NAME:$IMAGE_TAG"
@@ -50,3 +53,4 @@ phases:
 
 artifacts:
   files: []
+
