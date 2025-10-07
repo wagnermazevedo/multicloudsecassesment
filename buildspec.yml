@@ -8,9 +8,7 @@ env:
 phases:
   install:
     commands:
-      - echo "=== Instalando e validando dependências no ambiente de build ==="
-      #- yum update -y
-      #- yum install -y unzip curl jq awscli docker.io
+      - echo "=== Instalando dependências no ambiente de build ==="
       - aws --version
       - docker --version
 
@@ -20,10 +18,16 @@ phases:
       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$ECR_REPO"
 
   build:
+    runtime-versions:
+      docker: 20
+    privileged: true
     commands:
-      - echo "=== Construindo imagem Docker ==="
-      - docker build -t prowler-repo -f Dockerfile.prowler .
+      - echo "=== Construindo imagem Docker (forçando rebuild limpo) ==="
+      - docker build --no-cache -t prowler-repo -f Dockerfile.prowler .
       - docker tag prowler-repo:latest "$ECR_REPO:latest"
+      - echo "=== Validando binário prowler dentro da imagem ==="
+      - docker run --rm prowler-repo which prowler || (echo "❌ Prowler não encontrado!" && exit 1)
+      - docker run --rm prowler-repo whoami
 
   post_build:
     commands:
