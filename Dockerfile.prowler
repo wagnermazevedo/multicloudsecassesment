@@ -1,22 +1,27 @@
-# Usa a imagem oficial do Prowler
+# Usa a imagem pública oficial do Prowler
 FROM public.ecr.aws/prowler-cloud/prowler:latest
 
-# Alterna temporariamente para root apenas para instalar dependências extras
 USER root
 
-# Garante que o prowler esteja acessível mesmo fora do PATH padrão
-ENV PATH="/usr/local/bin:/home/prowler/.local/bin:${PATH}"
+# Garante que todas as localizações possíveis do Prowler estão no PATH
+ENV PATH="/usr/local/bin:/usr/bin:/home/prowler/.local/bin:${PATH}"
 
+# Verifica e corrige o binário do Prowler, se necessário
+RUN if [ ! -f /usr/local/bin/prowler ]; then \
+        if [ -f /usr/bin/prowler ]; then ln -sf /usr/bin/prowler /usr/local/bin/prowler; fi; \
+    fi
+
+# Instala ferramentas auxiliares
 RUN apt-get update -y && \
     apt-get install -y jq awscli git && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Copia o script customizado
+# Copia o script de execução
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN chmod +x /usr/local/bin/run-prowler.sh
 
-# Retorna ao usuário padrão da imagem
+# Retorna ao usuário padrão
 USER prowler
 
-# Usa o novo script como entrypoint
+# Define entrypoint
 ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
