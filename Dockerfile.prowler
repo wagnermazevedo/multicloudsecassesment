@@ -33,12 +33,15 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION
     rm -rf awscliv2.zip ./aws
 
 # === Instalação do Prowler (Via PIP - Última Versão Estável) ===
-# Isso resolve o erro 'exit code: 1'
+# CORREÇÃO CRUCIAL: O nome correto do pacote no PyPI é 'prowler', não 'prowler-cli'.
 RUN echo "🐍 Instalando Prowler (última versão estável)..." && \
     # Atualiza o pip e ferramentas base
     pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    # Instala o prowler-cli. O executável vai para /usr/local/bin
-    pip install --no-cache-dir prowler-cli
+    # Instala o Prowler com o nome de pacote correto: 'prowler'
+    pip install --no-cache-dir prowler
+    # ATENÇÃO: Se isso falhar com erro de permissão ou dependência, tente:
+    # pip install --no-cache-dir prowler --break-system-packages
+
 
 # === Teste de instalação e logs de debug ===
 RUN echo "🔍 Validando instalação do Prowler..." && \
