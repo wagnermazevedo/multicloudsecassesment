@@ -1,16 +1,16 @@
 # =======================================================
-# Dockerfile.prowler - Otimizado e Robusto (v2)
+# Dockerfile.prowler - Otimizado e Robusto
 # =======================================================
 
+# Usa imagem leve com Python e ferramentas necessárias
 FROM public.ecr.aws/docker/library/python:3.11-slim
 
 USER root
 
-# === Variáveis ===
-ENV PROWLER_VERSION=3.13.0
+# === Variável para a AWS CLI V2 (Para rastreabilidade) ===
 ENV AWS_CLI_VERSION=2.15.55
 
-# === Dependências do sistema (AWS CLI + utilitários) ===
+# === Dependências do sistema e ferramentas ===
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
         git \
@@ -25,26 +25,34 @@ RUN apt-get update -y && \
         dos2unix && \
     rm -rf /var/lib/apt/lists/*
 
-# === Instala AWS CLI v2 ===
+# === Instalação do AWS CLI v2 (Manual) ===
+# Garante a versão 2 do CLI para melhor integração com STS e S3
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" -o "awscliv2.zip" && \
     unzip awscliv2.zip && \
     ./aws/install && \
     rm -rf awscliv2.zip ./aws
 
-# === Instala Prowler via PyPI ===
-RUN echo "🐍 Instalando Prowler (versão: ${PROWLER_VERSION})..." && \
+# === Instalação do Prowler (Via PIP - Última Versão Estável) ===
+# Isso resolve o erro 'exit code: 1'
+RUN echo "🐍 Instalando Prowler (última versão estável)..." && \
+    # Atualiza o pip e ferramentas base
     pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir "prowler-cli==${PROWLER_VERSION}"
+    # Instala o prowler-cli. O executável vai para /usr/local/bin
+    pip install --no-cache-dir prowler-cli
 
-# === Validação da instalação ===
+# === Teste de instalação e logs de debug ===
 RUN echo "🔍 Validando instalação do Prowler..." && \
-    which prowler && prowler --version || (echo "❌ Falha ao validar Prowler" && exit 1)
+    echo "📌 PATH: $PATH" && \
+    which prowler && \
+    prowler --version || (echo "❌ Falha ao validar Prowler" && exit 1)
 
-# === Copia o script principal ===
+# === Copia e prepara o seu script principal ===
+# O script run-prowler.sh DEVE ser a versão corrigida para rodar com o 'prowler' diretamente.
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
-# === PATH global ===
+# === PATH global e EntryPoint ===
+# Garante que /usr/local/bin (onde Prowler e AWS CLI estão) seja o primeiro no PATH.
 ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin"
 
 ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
