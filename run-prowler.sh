@@ -1,6 +1,37 @@
 #!/bin/bash
 set -euo pipefail
 
+echo "🔎 Procurando binário 'prowler'..."
+
+PROWLERPATH=$(find /usr/local/bin /usr/bin /opt /home /root -type f -name prowler -executable 2>/dev/null | grep -m1 -E '/prowler$' || true)
+
+if [ -n "$PROWLERPATH" ]; then
+  echo "✅ Prowler encontrado em: $PROWLERPATH"
+  export PATH="$(dirname "$PROWLERPATH"):$PATH"
+else
+  echo "⚠️  Prowler não encontrado nos diretórios padrão. Tentando busca global..."
+  PROWLERPATH=$(find / -type f -name prowler -executable 2>/dev/null | head -n 1 || true)
+  if [ -n "$PROWLERPATH" ]; then
+    echo "✅ Prowler encontrado em: $PROWLERPATH"
+    export PATH="$(dirname "$PROWLERPATH"):$PATH"
+  else
+    echo "❌ Prowler não encontrado em nenhum diretório. Abortando execução."
+    exit 1
+  fi
+fi
+
+# Teste final
+if ! command -v prowler >/dev/null 2>&1; then
+  echo "⚠️  Mesmo após PATH update, 'prowler' não foi localizado."
+  echo "📌 PATH atual: $PATH"
+  echo "📌 Local encontrado: ${PROWLERPATH:-nenhum}"
+  exit 1
+fi
+
+echo "🚀 Executável validado: $(command -v prowler)"
+
+
+
 echo "🛰️  === Iniciando execução do Prowler Runner ==="
 
 # === FIX DE PATH ===
