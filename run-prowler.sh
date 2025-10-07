@@ -3,9 +3,22 @@ set -euo pipefail
 
 echo "🛰️ === Iniciando execução do Prowler Runner ==="
 
+# === Diagnóstico inicial ===
+echo "📂 Diretório atual (pwd): $(pwd)"
+echo "👤 Usuário atual: $(whoami)"
+echo "📁 Conteúdo do diretório atual:"
+ls -alh || echo "⚠️ Falha ao listar diretório"
+echo "🔧 PATH inicial: $PATH"
+
 # === FIX GLOBAL DE PATH ===
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/sbin:/home/prowler/.local/bin:/opt/prowler:${PATH}"
+echo "🔧 PATH após correção: $PATH"
+echo "📂 Conteúdo de /usr/local/bin:"
+ls -lh /usr/local/bin || echo "⚠️ Não foi possível listar /usr/local/bin"
+echo "📂 Conteúdo de /opt/prowler:"
+ls -lh /opt/prowler || echo "⚠️ /opt/prowler não existe ou inacessível"
 
+# === LOCALIZAÇÃO DO BINÁRIO ===
 echo "🔎 Procurando binário 'prowler'..."
 PROWLERPATH=$(find /usr/local/bin /usr/bin /opt /home /root -type f -name prowler -executable 2>/dev/null | grep -m1 -E '/prowler$' || true)
 
@@ -23,8 +36,8 @@ if [ -z "$PROWLERPATH" ]; then
 fi
 
 # Garante execução persistente
-ln -sf "$PROWLERPATH" /usr/local/bin/prowler
-chmod +x /usr/local/bin/prowler
+ln -sf "$PROWLERPATH" /usr/local/bin/prowler || true
+chmod +x "$PROWLERPATH" || true
 
 # Teste final
 if ! command -v prowler >/dev/null 2>&1; then
@@ -35,7 +48,14 @@ if ! command -v prowler >/dev/null 2>&1; then
 fi
 
 echo "🚀 Executável validado: $(command -v prowler)"
-prowler --version || echo "⚠️ Não foi possível exibir a versão do prowler (pode não afetar a execução)."
+"$PROWLERPATH" --version || echo "⚠️ Não foi possível exibir a versão do prowler (pode não afetar a execução)."
+
+# Diagnóstico adicional de onde está rodando
+echo "📦 Workdir atual: $(pwd)"
+echo "📁 Listando estrutura até o nível 2 em /opt:"
+find /opt -maxdepth 2 -type d -print || true
+echo "📄 Testando acesso direto a Prowler: ls -l $(dirname "$PROWLERPATH")"
+ls -lh "$(dirname "$PROWLERPATH")" || echo "⚠️ Não foi possível listar o diretório do prowler"
 
 # Detecta o caminho do próprio script (debug)
 RUN_SCRIPT_PATH=$(realpath "$0" 2>/dev/null || true)
@@ -80,7 +100,7 @@ run_prowler_generic() {
   echo "🚀 Executando Prowler para ${provider^^} → $id"
   local OUT_FILE="${OUTPUT_DIR}/prowler-output-${id}-${TIMESTAMP}.json"
 
-  prowler "$provider" "${extra_args[@]}" \
+  "$PROWLERPATH" "$provider" "${extra_args[@]}" \
     --output-formats json-asff \
     --output-filename "$(basename "$OUT_FILE" .json)" \
     --output-directory "$OUTPUT_DIR" \
