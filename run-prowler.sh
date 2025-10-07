@@ -4,6 +4,19 @@ set -euo pipefail
 # === PATH FIX ===
 export PATH="/usr/local/bin:/home/prowler/.local/bin:${PATH}"
 
+if [ ! -x "$(command -v prowler)" ]; then
+  echo "⚠️ Prowler não encontrado no PATH atual ($PATH)"
+  echo "Tentando localizar manualmente..."
+  PROWLER_PATH=$(find / -type f -name prowler 2>/dev/null | head -n 1)
+  if [ -n "$PROWLER_PATH" ]; then
+    echo "✅ Prowler encontrado em: $PROWLER_PATH"
+    alias prowler="$PROWLER_PATH"
+  else
+    echo "❌ Prowler não encontrado em nenhum diretório"
+    exit 1
+  fi
+fi
+
 echo "🛰️  === Iniciando execução do Prowler Runner ==="
 
 # === VARIÁVEIS OBRIGATÓRIAS (validação manual para mensagens amigáveis) ===
