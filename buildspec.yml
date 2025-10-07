@@ -17,10 +17,14 @@ phases:
       - aws --version
       - docker --version
 
-  pre_build:
+    pre_build:
     commands:
       - echo "=== Login no Amazon ECR ==="
-      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$FULL_ECR_URI"
+      - echo "Autenticando na conta $AWS_ACCOUNT_ID na região $AWS_REGION"
+      - aws --version
+      - docker --version
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $FULL_ECR_URI
+
 
   build:
     commands:
@@ -42,3 +46,4 @@ phases:
 
 artifacts:
   files: []
+
