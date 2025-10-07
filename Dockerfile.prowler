@@ -3,28 +3,30 @@ FROM public.ecr.aws/docker/library/python:3.11-slim
 
 USER root
 
-# === Instala dependências de build e runtime ===
+# === Instala dependências de sistema e build ===
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
         git \
         build-essential \
         libffi-dev \
         libssl-dev \
+        libc-dev \
+        pkg-config \
         curl \
         jq \
         awscli \
         unzip && \
     rm -rf /var/lib/apt/lists/*
 
-# === Instala o prowler via pip ===
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+# === Atualiza pip e instala prowler ===
+RUN python3 -m pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir prowler && \
     ln -sf "$(which prowler)" /usr/local/bin/prowler && \
     chmod +x /usr/local/bin/prowler
 
-# === Validação ===
+# === Validação durante build ===
 RUN echo "🔍 Validando instalação do Prowler..." && \
-    which prowler && sleep 15 && prowler --version || (echo "❌ Falha ao validar Prowler" && exit 1)
+    prowler --version && sleep 15|| (echo "❌ Falha ao validar Prowler" && exit 1)
 
 # === Copia o script principal ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
@@ -32,5 +34,6 @@ RUN chmod +x /usr/local/bin/run-prowler.sh
 
 # === Define PATH e EntryPoint ===
 ENV PATH="/usr/local/bin:/usr/bin:/bin:/root/.local/bin:${PATH}"
+
 ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
 
