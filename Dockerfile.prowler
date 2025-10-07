@@ -1,27 +1,36 @@
-# Usa uma base leve com Python
+# Usa imagem base do ECR público da AWS (sem limite de pull)
 FROM public.ecr.aws/docker/library/python:3.11-slim
 
 USER root
 
-# === Instala dependências básicas ===
+# === Instala dependências de build e runtime ===
 RUN apt-get update -y && \
-    apt-get install -y jq awscli git curl unzip && \
+    apt-get install -y --no-install-recommends \
+        git \
+        build-essential \
+        libffi-dev \
+        libssl-dev \
+        curl \
+        jq \
+        awscli \
+        unzip && \
     rm -rf /var/lib/apt/lists/*
 
 # === Instala o prowler via pip ===
-RUN pip install --no-cache-dir prowler && \
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir prowler && \
     ln -sf "$(which prowler)" /usr/local/bin/prowler && \
     chmod +x /usr/local/bin/prowler
 
-# === Verificação ===
-RUN echo "🔎 Verificando instalação do Prowler..." && \
-    which prowler && prowler --version || (echo "❌ Erro ao validar instalação" && exit 1)
+# === Validação ===
+RUN echo "🔍 Validando instalação do Prowler..." && \
+    which prowler && prowler --version || (echo "❌ Falha ao validar Prowler" && exit 1)
 
 # === Copia o script principal ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN chmod +x /usr/local/bin/run-prowler.sh
 
-# === Define o PATH e entrypoint ===
+# === Define PATH e EntryPoint ===
 ENV PATH="/usr/local/bin:/usr/bin:/bin:/root/.local/bin:${PATH}"
-
 ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
+
