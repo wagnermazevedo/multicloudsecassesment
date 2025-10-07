@@ -15,4 +15,4 @@ COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN chmod +x /usr/local/bin/run-prowler.sh
 
 # Define o entrypoint como o seu script
-ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
+#ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
