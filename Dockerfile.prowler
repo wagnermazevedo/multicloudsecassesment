@@ -2,7 +2,6 @@
 # Dockerfile.prowler - Otimizado e Robusto (v2)
 # =======================================================
 
-# Usa imagem leve com Python e ferramentas necessárias
 FROM public.ecr.aws/docker/library/python:3.11-slim
 
 USER root
@@ -11,7 +10,7 @@ USER root
 ENV PROWLER_VERSION=3.13.0
 ENV AWS_CLI_VERSION=2.15.55
 
-# === Dependências do sistema (Instala AWS CLI V2 + Ferramentas) ===
+# === Dependências do sistema (AWS CLI + utilitários) ===
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
         git \
@@ -26,30 +25,26 @@ RUN apt-get update -y && \
         dos2unix && \
     rm -rf /var/lib/apt/lists/*
 
-# Instala AWS CLI v2 manualmente para ter a versão mais recente e evitar conflito com 'apt install awscli'
+# === Instala AWS CLI v2 ===
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" -o "awscliv2.zip" && \
     unzip awscliv2.zip && \
     ./aws/install && \
     rm -rf awscliv2.zip ./aws
 
-# === Instalação do Prowler (Via PIP - Mais simples e estável) ===
-# Instala diretamente o pacote PyPI. Isso é mais simples do que clonar e depois 'pip install .'
-RUN echo "🐍 Instalando Prowler (versão: $PROWLER_VERSION)..." && \
+# === Instala Prowler via PyPI ===
+RUN echo "🐍 Instalando Prowler (versão: ${PROWLER_VERSION})..." && \
     pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir "prowler-cli==$PROWLER_VERSION"
+    pip install --no-cache-dir "prowler-cli==${PROWLER_VERSION}"
 
-# O pip instala o executável em /usr/local/bin, que já está no PATH
+# === Validação da instalação ===
 RUN echo "🔍 Validando instalação do Prowler..." && \
-    which prowler && \
-    prowler --version || (echo "❌ Falha ao validar Prowler" && exit 1)
+    which prowler && prowler --version || (echo "❌ Falha ao validar Prowler" && exit 1)
 
-# === Conversão preventiva CRLF -> LF (Aplicada ao seu script) ===
-# Esta etapa é importante se você desenvolve no Windows.
+# === Copia o script principal ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
-# === PATH global e EntryPoint ===
-# Garante que /root/.local/bin esteja no PATH, por via das dúvidas, se o pip mudasse o local.
+# === PATH global ===
 ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin"
 
 ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
