@@ -2,18 +2,18 @@
 version: 0.2
 
 env:
-  # Definir variáveis de ambiente é a melhor prática para o ECR
   variables:
     AWS_REGION: "us-east-1"
     AWS_ACCOUNT_ID: "057959860487"
     ECR_REPO_NAME: "multicloud-prowler-repo"
-    IMAGE_TAG: "latest" # Será sobrescrito com o timestamp no post_build
+    IMAGE_TAG: "latest"
 
 phases:
   install:
     commands:
-      # Instala o utilitário 'jq' se não estiver disponível (muito comum em imagens base do CodeBuild)
-      - echo "=== Validando jq (dependência do Prowler Runner) ==="
+      # Garante que 'jq' esteja instalado para uso em scripts Bash, se necessário.
+      - echo "=== Validando jq ==="
+      # Comando de instalação com pipe é seguro e não causa erro de YAML.
       - if ! command -v jq &> /dev/null; then echo "Instalando jq..."; apt-get update && apt-get install -y jq; fi
       - aws --version
       - docker --version
@@ -21,29 +21,33 @@ phases:
   pre_build:
     commands:
       - echo "=== Login no ECR ==="
-      # Uso de variáveis de ambiente do CodeBuild para o login, mais seguro
       - FULL_ECR_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
       - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin "$FULL_ECR_URI"
 
   build:
     commands:
       - echo "=== Construindo imagem Docker ==="
-      # 1. Constrói a imagem localmente
       - docker build -t prowler-repo-local -f Dockerfile.prowler .
-      
-      # 2. Tag da última versão (latest)
+      - FULL_ECR_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
       - docker tag prowler-repo-local:latest "$FULL_ECR_URI/$ECR_REPO_NAME:$IMAGE_TAG"
 
   post_build:
     commands:
       - echo "=== Publicando imagem no ECR ==="
-      # Adiciona uma tag de timestamp (ou Git Commit ID) para ter rastreabilidade
+      
+      # 1. Define a URI completa novamente (garantindo que esteja disponível)
+      - FULL_ECR_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+      
+      # 2. Cria a tag de TIMESTAMP (Linha 49 - a linha de foco do erro)
       - TIMESTAMP_TAG=$(date +%Y%m%d%H%M%S)
+      
+      # 3. Tag da imagem com o TIMESTAMP
       - docker tag prowler-repo-local:latest "$FULL_ECR_URI/$ECR_REPO_NAME:$TIMESTAMP_TAG"
       
-      # Push da TAG 'latest'
+      # 4. Push da TAG 'latest'
       - docker push "$FULL_ECR_URI/$ECR_REPO_NAME:$IMAGE_TAG"
-      # Push da TAG de TIMESTAMP para rastreabilidade
+      
+      # 5. Push da TAG de TIMESTAMP para rastreabilidade
       - docker push "$FULL_ECR_URI/$ECR_REPO_NAME:$TIMESTAMP_TAG"
 
       - echo "=== Build concluído com sucesso. Imagens publicadas: $IMAGE_TAG e $TIMESTAMP_TAG ==="
