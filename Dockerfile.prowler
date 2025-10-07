@@ -1,3 +1,7 @@
+# =======================================================
+# Dockerfile.prowler — Build robusto para execução multi-cloud
+# =======================================================
+
 # Usa imagem leve com Python e ferramentas necessárias
 FROM public.ecr.aws/docker/library/python:3.11-slim
 
@@ -15,28 +19,41 @@ RUN apt-get update -y && \
         curl \
         jq \
         awscli \
-        unzip && \
+        unzip \
+        dos2unix && \
     rm -rf /var/lib/apt/lists/*
 
 # === Clona o repositório oficial ===
-RUN git clone --depth 1 https://github.com/prowler-cloud/prowler.git /opt/prowler && \
+RUN echo "📥 Clonando repositório do Prowler..." && \
+    git clone --depth 1 https://github.com/prowler-cloud/prowler.git /opt/prowler && \
     ln -sf /opt/prowler/prowler /usr/local/bin/prowler && \
     chmod +x /opt/prowler/prowler /usr/local/bin/prowler
 
 # === Instala dependências Python diretamente do projeto ===
 WORKDIR /opt/prowler
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+RUN echo "🐍 Instalando dependências Python..." && \
+    pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir .
 
-# === Teste de instalação ===
+# === Conversão preventiva CRLF -> LF ===
+RUN echo "🧹 Normalizando scripts (dos2unix)..." && \
+    find /opt/prowler -type f -name "*.sh" -exec dos2unix {} \; || true && \
+    dos2unix /usr/local/bin/prowler || true
+
+# === Teste de instalação e logs de debug ===
 RUN echo "🔍 Validando instalação do Prowler..." && \
+    echo "📂 Diretório atual: $(pwd)" && \
+    echo "📁 Conteúdo de /usr/local/bin:" && ls -lh /usr/local/bin && \
+    echo "📁 Conteúdo de /opt/prowler:" && ls -lh /opt/prowler | head && \
+    echo "📌 PATH: $PATH" && \
+    which prowler || echo "⚠️ 'prowler' ainda não no PATH" && \
     prowler --version || (echo "❌ Falha ao validar Prowler" && exit 1)
 
-# === Copia seu script ===
+# === Copia seu script principal ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
-RUN chmod +x /usr/local/bin/run-prowler.sh
+RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
-# === PATH e EntryPoint ===
-ENV PATH="/usr/local/bin:/usr/bin:/bin:/root/.local/bin:${PATH}"
+# === PATH global e EntryPoint ===
+ENV PATH="/usr/local/bin:/usr/bin:/bin:/root/.local/bin:/opt/prowler:${PATH}"
 
 ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
