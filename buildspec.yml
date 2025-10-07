@@ -3,51 +3,51 @@ version: 0.2
 
 env:
   variables:
-    AWS_REGION: us-east-1
+    AWS_REGION: "us-east-1"
     AWS_ACCOUNT_ID: "057959860487"
-    ECR_REPO_NAME: multicloud-prowler-repo
-    IMAGE_TAG: latest
+    ECR_REPO_NAME: "multicloud-prowler-repo"
+    IMAGE_TAG: "latest"
 
 phases:
   install:
     commands:
-      - echo "=== Validando ambiente CodeBuild ==="
-      - export FULL_ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-      - echo "Região: $AWS_REGION | Conta: $AWS_ACCOUNT_ID"
-      - echo "ECR URI: $FULL_ECR_URI"
-      - aws --version || { echo "❌ AWS CLI não encontrada"; exit 1; }
-      - docker --version || { echo "❌ Docker não encontrado"; exit 1; }
-      - echo "=== Testando credenciais AWS ==="
-      - aws sts get-caller-identity || { echo "❌ Falha ao obter credenciais AWS. Role não configurada."; exit 1; }
-      - echo "=== Testando login no ECR ==="
-      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $FULL_ECR_URI || { echo "❌ Falha no login ECR"; exit 1; }
+      # Mantendo o install simples e robusto
+      - echo "=== Validando dependências no ambiente de build ==="
+      - if ! command -v jq &> /dev/null; then echo "Instalando jq..."; apt-get update && apt-get install -y jq; fi
+      - aws --version
+      - docker --version
 
   pre_build:
     commands:
-      - echo "=== Login no Amazon ECR (pré-build) ==="
-      - export FULL_ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-      - echo "Autenticando na conta $AWS_ACCOUNT_ID na região $AWS_REGION"
-      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $FULL_ECR_URI
+      # Mantendo o pre_build
+      - echo "=== Login no ECR ==="
+      - FULL_ECR_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin "$FULL_ECR_URI"
 
   build:
     commands:
+      # Mantendo o build
       - echo "=== Construindo imagem Docker ==="
-      - export FULL_ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-      - docker build -t "$ECR_REPO_NAME:latest" -f Dockerfile.prowler .
-      - docker tag "$ECR_REPO_NAME:latest" "$FULL_ECR_URI/$ECR_REPO_NAME:$IMAGE_TAG"
+      - docker build -t prowler-repo-local -f Dockerfile.prowler .
+      - FULL_ECR_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+      - docker tag prowler-repo-local:latest "$FULL_ECR_URI/$ECR_REPO_NAME:$IMAGE_TAG"
 
   post_build:
     commands:
-      - echo "=== Publicando imagem no Amazon ECR ==="
-      - export FULL_ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-      - TIMESTAMP_TAG=$(date +%Y%m%d%H%M%S)
-      - docker tag "$ECR_REPO_NAME:latest" "$FULL_ECR_URI/$ECR_REPO_NAME:$TIMESTAMP_TAG"
-      - docker push "$FULL_ECR_URI/$ECR_REPO_NAME:$IMAGE_TAG"
-      - docker push "$FULL_ECR_URI/$ECR_REPO_NAME:$TIMESTAMP_TAG"
-      - echo "=== Build concluído com sucesso ==="
-      - echo "Imagens publicadas:"
-      - echo "→ $FULL_ECR_URI/$ECR_REPO_NAME:$IMAGE_TAG"
-      - echo "→ $FULL_ECR_URI/$ECR_REPO_NAME:$TIMESTAMP_TAG"
+      # USANDO SINTAXE DE BLOCO (|) PARA EVITAR ERROS DE INDENTAÇÃO
+      - echo "=== Publicando imagem no ECR ==="
+      - |
+        FULL_ECR_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+        TIMESTAMP_TAG=$(date +%Y%m%d%H%M%S)
+        
+        # Tag com o TIMESTAMP
+        docker tag prowler-repo-local:latest "$FULL_ECR_URI/$ECR_REPO_NAME:$TIMESTAMP_TAG"
+        
+        # Push da TAG 'latest' e da TAG de TIMESTAMP
+        docker push "$FULL_ECR_URI/$ECR_REPO_NAME:$IMAGE_TAG"
+        docker push "$FULL_ECR_URI/$ECR_REPO_NAME:$TIMESTAMP_TAG"
+        
+        echo "=== Build concluído com sucesso. Imagens publicadas: $IMAGE_TAG e $TIMESTAMP_TAG ==="
 
 artifacts:
   files: []
