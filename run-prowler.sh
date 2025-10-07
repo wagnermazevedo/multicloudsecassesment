@@ -1,25 +1,39 @@
 #!/bin/bash
 set -euo pipefail
 
-# === PATH FIX ===
-export PATH="/usr/local/bin:/home/prowler/.local/bin:${PATH}"
-
-if [ ! -x "$(command -v prowler)" ]; then
-  echo "⚠️ Prowler não encontrado no PATH atual ($PATH)"
-  echo "Tentando localizar manualmente..."
-  PROWLER_PATH=$(find / -type f -name prowler 2>/dev/null | head -n 1)
-  if [ -n "$PROWLER_PATH" ]; then
-    echo "✅ Prowler encontrado em: $PROWLER_PATH"
-    alias prowler="$PROWLER_PATH"
-  else
-    echo "❌ Prowler não encontrado em nenhum diretório"
-    exit 1
-  fi
-fi
-
 echo "🛰️  === Iniciando execução do Prowler Runner ==="
 
-# === VARIÁVEIS OBRIGATÓRIAS (validação manual para mensagens amigáveis) ===
+# === FIX DE PATH ===
+export PATH="/usr/local/bin:/home/prowler/.local/bin:/opt/prowler:${PATH}"
+
+# === LOCALIZAÇÃO AUTOMÁTICA DO BINÁRIO E SCRIPT ===
+# Verifica se o prowler está acessível; se não, busca manualmente
+if ! command -v prowler >/dev/null 2>&1; then
+  echo "⚠️ Prowler não encontrado no PATH atual:"
+  echo "$PATH"
+  echo "🔎 Tentando localizar binário com find (isso pode demorar alguns segundos)..."
+  PROWLER_PATH=$(find / -type f -name "prowler" 2>/dev/null | head -n 1 || true)
+  if [[ -n "$PROWLER_PATH" ]]; then
+    echo "✅ Prowler localizado em: $PROWLER_PATH"
+    export PATH="$(dirname "$PROWLER_PATH"):$PATH"
+  else
+    echo "❌ Prowler não encontrado em nenhum diretório do contêiner."
+    exit 1
+  fi
+else
+  PROWLER_PATH=$(command -v prowler)
+  echo "✅ Prowler encontrado em: $PROWLER_PATH"
+fi
+
+# Também detecta o próprio script (útil em debug)
+RUN_SCRIPT_PATH=$(find / -type f -name "run-prowler.sh" 2>/dev/null | head -n 1 || true)
+if [[ -n "$RUN_SCRIPT_PATH" ]]; then
+  echo "🧩 Script em execução localizado em: $RUN_SCRIPT_PATH"
+else
+  echo "⚠️ Não foi possível determinar o caminho do run-prowler.sh (execução pode prosseguir)"
+fi
+
+# === VARIÁVEIS OBRIGATÓRIAS ===
 : "${CLOUD_PROVIDER:?❌ CLOUD_PROVIDER não definido (aws | azure | gcp)}"
 : "${TARGET_ACCOUNTS:?❌ TARGET_ACCOUNTS não definido (IDs separados por vírgula ou ALL)}"
 
@@ -44,13 +58,7 @@ upload_to_s3() {
   }
 }
 
-# === Verifica se Prowler está disponível ===
-if ! command -v prowler >/dev/null 2>&1; then
-  echo "⚠️  Prowler não encontrado no PATH (${PATH})"
-  exit 1
-fi
-
-# === Função para execução genérica ===
+# === Execução genérica ===
 run_prowler_generic() {
   local provider="$1"
   local id="$2"
@@ -98,7 +106,6 @@ if [[ "$CLOUD_PROVIDER" == "aws" ]]; then
 
     run_prowler_generic aws "$ACCOUNT_ID" --region "$REGION"
 
-    # Limpa credenciais da conta anterior
     unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
   done
 fi
