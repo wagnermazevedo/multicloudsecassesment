@@ -25,4 +25,3 @@ USER prowler
 #ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/local/bin/run-prowler.sh"]
-DOCKER
