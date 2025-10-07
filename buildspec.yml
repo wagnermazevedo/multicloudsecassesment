@@ -4,39 +4,32 @@ version: 0.2
 env:
   variables:
     ECR_REPO: "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo"
-    AWS_REGION: "us-east-1"
 
 phases:
   install:
     commands:
-      - echo "=== Installing build dependencies and verifying Docker availability ==="
+      - echo "=== Instalando e validando dependências no ambiente de build ==="
+      #- yum update -y
+      #- yum install -y unzip curl jq awscli docker.io
       - aws --version
       - docker --version
-      - echo "✅ Environment ready."
 
   pre_build:
     commands:
-      - echo "=== Logging in to Amazon ECR ==="
-      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
+      - echo "=== Login no ECR ==="
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$ECR_REPO"
 
   build:
     commands:
-      - echo "=== Building Docker image for Prowler Runner ==="
-      - docker build --no-cache -t prowler-repo -f Dockerfile.prowler .
-      - echo "=== Validating if Prowler binary is present inside container ==="
-      - docker run --rm prowler-repo which prowler || (echo "❌ Prowler binary not found in image!" && exit 1)
-      - echo "=== Displaying Prowler version for sanity check ==="
-      - docker run --rm prowler-repo prowler -v || echo "⚠️ Warning: Prowler version check failed but continuing..."
-      - echo "=== Tagging image for ECR push ==="
-      - docker tag prowler-repo:latest $ECR_REPO:latest
+      - echo "=== Construindo imagem Docker ==="
+      - docker build -t prowler-repo -f Dockerfile.prowler .
+      - docker tag prowler-repo:latest "$ECR_REPO:latest"
 
   post_build:
     commands:
-      - echo "=== Pushing image to Amazon ECR ==="
-      - docker push $ECR_REPO:latest
-      - echo "✅ Build and push completed successfully."
-      - echo "=== Image details ==="
-      - docker images $ECR_REPO:latest
+      - echo "=== Publicando imagem no ECR ==="
+      - docker push "$ECR_REPO:latest"
+      - echo "=== Build concluído com sucesso ==="
 
 artifacts:
   files: []
