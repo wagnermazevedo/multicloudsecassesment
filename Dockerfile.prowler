@@ -1,5 +1,5 @@
 # =======================================================
-# Dockerfile.prowler — Build robusto para execução multi-cloud
+# Dockerfile.prowler - Otimizado e Robusto (v2)
 # =======================================================
 
 # Usa imagem leve com Python e ferramentas necessárias
@@ -7,7 +7,11 @@ FROM public.ecr.aws/docker/library/python:3.11-slim
 
 USER root
 
-# === Dependências do sistema ===
+# === Variáveis ===
+ENV PROWLER_VERSION=3.13.0
+ENV AWS_CLI_VERSION=2.15.55
+
+# === Dependências do sistema (Instala AWS CLI V2 + Ferramentas) ===
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
         git \
@@ -18,42 +22,34 @@ RUN apt-get update -y && \
         pkg-config \
         curl \
         jq \
-        awscli \
         unzip \
         dos2unix && \
     rm -rf /var/lib/apt/lists/*
 
-# === Clona o repositório oficial ===
-RUN echo "📥 Clonando repositório do Prowler..." && \
-    git clone --depth 1 https://github.com/prowler-cloud/prowler.git /opt/prowler && \
-    ln -sf /opt/prowler/prowler /usr/local/bin/prowler && \
-    chmod +x /opt/prowler/prowler /usr/local/bin/prowler
+# Instala AWS CLI v2 manualmente para ter a versão mais recente e evitar conflito com 'apt install awscli'
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && \
+    ./aws/install && \
+    rm -rf awscliv2.zip ./aws
 
-# === Instala dependências Python diretamente do projeto ===
-WORKDIR /opt/prowler
-RUN echo "🐍 Instalando dependências Python..." && \
+# === Instalação do Prowler (Via PIP - Mais simples e estável) ===
+# Instala diretamente o pacote PyPI. Isso é mais simples do que clonar e depois 'pip install .'
+RUN echo "🐍 Instalando Prowler (versão: $PROWLER_VERSION)..." && \
     pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir .
+    pip install --no-cache-dir "prowler-cli==$PROWLER_VERSION"
 
-# === Conversão preventiva CRLF -> LF ===
-RUN echo "🧹 Normalizando scripts (dos2unix)..." && \
-    find /opt/prowler -type f -name "*.sh" -exec dos2unix {} \; || true && \
-    dos2unix /usr/local/bin/prowler || true
-
-# === Teste de instalação e logs de debug ===
+# O pip instala o executável em /usr/local/bin, que já está no PATH
 RUN echo "🔍 Validando instalação do Prowler..." && \
-    echo "📂 Diretório atual: $(pwd)" && \
-    echo "📁 Conteúdo de /usr/local/bin:" && ls -lh /usr/local/bin && \
-    echo "📁 Conteúdo de /opt/prowler:" && ls -lh /opt/prowler | head && \
-    echo "📌 PATH: $PATH" && \
-    which prowler || echo "⚠️ 'prowler' ainda não no PATH" && \
+    which prowler && \
     prowler --version || (echo "❌ Falha ao validar Prowler" && exit 1)
 
-# === Copia seu script principal ===
+# === Conversão preventiva CRLF -> LF (Aplicada ao seu script) ===
+# Esta etapa é importante se você desenvolve no Windows.
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
 # === PATH global e EntryPoint ===
-ENV PATH="/usr/local/bin:/usr/bin:/bin:/root/.local/bin:/opt/prowler:${PATH}"
+# Garante que /root/.local/bin esteja no PATH, por via das dúvidas, se o pip mudasse o local.
+ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin"
 
 ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
