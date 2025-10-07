@@ -16,3 +16,4 @@ RUN chmod +x /usr/local/bin/run-prowler.sh
 
 # Define o entrypoint como o seu script
 #ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
+ENTRYPOINT ["/bin/bash", "-c", "/usr/local/bin/run-prowler.sh"]
