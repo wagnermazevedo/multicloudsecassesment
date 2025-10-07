@@ -4,10 +4,12 @@ FROM public.ecr.aws/prowler-cloud/prowler:latest
 USER root
 
 # Ajusta PATH e cria link simbólico para garantir que o binário 'prowler' seja encontrado
-ENV PATH="/usr/local/bin:/usr/bin:/home/prowler/.local/bin:${PATH}"
+#ENV PATH="/usr/local/bin:/usr/bin:/home/prowler/.local/bin:${PATH}"
+ENV PATH="/usr/local/bin:/usr/bin:/home/prowler/.local/bin:/opt/prowler:${PATH}"
 RUN if [ ! -f /usr/local/bin/prowler ]; then \
         if [ -f /usr/bin/prowler ]; then ln -sf /usr/bin/prowler /usr/local/bin/prowler; fi; \
     fi
+export PATH="/usr/local/bin:/usr/bin:/home/prowler/.local/bin:/opt/prowler:${PATH}"
 
 # Instala dependências auxiliares para AWS CLI e jq
 RUN apt-get update -y && \
