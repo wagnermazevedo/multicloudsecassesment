@@ -7,7 +7,8 @@ env:
     AWS_ACCOUNT_ID: "057959860487"
     ECR_REPO_NAME: "multicloud-prowler-repo"
     IMAGE_TAG: "latest"
-    FULL_ECR_URI: "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+    FULL_ECR_URI: "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+
 
 phases:
   install:
@@ -49,4 +50,5 @@ phases:
 
 artifacts:
   files: []
+
 
