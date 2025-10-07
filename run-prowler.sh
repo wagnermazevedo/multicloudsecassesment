@@ -1,6 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
+if ! command -v prowler &> /dev/null; then
+  echo "⚠️ Prowler not found — installing temporary version..."
+  pip install prowler-cli --quiet
+  export PATH="$PATH:/root/.local/bin"
+fi
+
+
 echo "🛰️ === Iniciando execução do Prowler Runner ==="
 
 # === Diagnóstico inicial ===
