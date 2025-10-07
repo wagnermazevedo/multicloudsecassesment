@@ -9,12 +9,12 @@ env:
     IMAGE_TAG: "latest"
     FULL_ECR_URI: "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
 
-
 phases:
   install:
     commands:
       - echo "=== Validando ambiente CodeBuild ==="
       - echo "Região: $AWS_REGION | Conta: $AWS_ACCOUNT_ID"
+      - export FULL_ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
       - aws --version || (echo "❌ AWS CLI não encontrada" && exit 1)
       - docker --version || (echo "❌ Docker não encontrado" && exit 1)
       - echo "=== Testando credenciais AWS ==="
@@ -50,5 +50,3 @@ phases:
 
 artifacts:
   files: []
-
-
