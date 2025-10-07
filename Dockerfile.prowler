@@ -1,5 +1,5 @@
 # Usa uma base leve com Python
-FROM python:3.11-slim
+FROM public.ecr.aws/docker/library/python:3.11-slim
 
 USER root
 
