@@ -12,5 +12,8 @@ RUN apt-get update -y && \
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN chmod +x /usr/local/bin/run-prowler.sh
 
+# IMPORTANTE: retorna ao mesmo usuário padrão da imagem base
+USER prowler
+
 # Define entrypoint
 ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
