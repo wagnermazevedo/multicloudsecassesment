@@ -1,67 +1,48 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "🔎 Procurando binário 'prowler'..."
+echo "🛰️ === Iniciando execução do Prowler Runner ==="
 
+# === FIX GLOBAL DE PATH ===
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/sbin:/home/prowler/.local/bin:/opt/prowler:${PATH}"
+
+echo "🔎 Procurando binário 'prowler'..."
 PROWLERPATH=$(find /usr/local/bin /usr/bin /opt /home /root -type f -name prowler -executable 2>/dev/null | grep -m1 -E '/prowler$' || true)
 
 if [ -n "$PROWLERPATH" ]; then
   echo "✅ Prowler encontrado em: $PROWLERPATH"
-  export PATH="$(dirname "$PROWLERPATH"):$PATH"
 else
   echo "⚠️  Prowler não encontrado nos diretórios padrão. Tentando busca global..."
   PROWLERPATH=$(find / -type f -name prowler -executable 2>/dev/null | head -n 1 || true)
-  if [ -n "$PROWLERPATH" ]; then
-    echo "✅ Prowler encontrado em: $PROWLERPATH"
-    export PATH="$(dirname "$PROWLERPATH"):$PATH"
-  else
-    echo "❌ Prowler não encontrado em nenhum diretório. Abortando execução."
-    exit 1
-  fi
 fi
+
+# Se ainda não achou, aborta
+if [ -z "$PROWLERPATH" ]; then
+  echo "❌ Prowler não encontrado em nenhum diretório. Abortando execução."
+  exit 1
+fi
+
+# Garante execução persistente
+ln -sf "$PROWLERPATH" /usr/local/bin/prowler
+chmod +x /usr/local/bin/prowler
 
 # Teste final
 if ! command -v prowler >/dev/null 2>&1; then
-  echo "⚠️  Mesmo após PATH update, 'prowler' não foi localizado."
+  echo "❌ Mesmo após correção de PATH, 'prowler' não é executável."
   echo "📌 PATH atual: $PATH"
-  echo "📌 Local encontrado: ${PROWLERPATH:-nenhum}"
+  echo "📌 Local encontrado: $PROWLERPATH"
   exit 1
 fi
 
 echo "🚀 Executável validado: $(command -v prowler)"
+prowler --version || echo "⚠️ Não foi possível exibir a versão do prowler (pode não afetar a execução)."
 
-
-
-echo "🛰️  === Iniciando execução do Prowler Runner ==="
-
-# === FIX DE PATH ===
-export PATH="/usr/local/bin:/home/prowler/.local/bin:/opt/prowler:${PATH}"
-
-# === LOCALIZAÇÃO AUTOMÁTICA DO BINÁRIO E SCRIPT ===
-# Verifica se o prowler está acessível; se não, busca manualmente
-if ! command -v prowler >/dev/null 2>&1; then
-  echo "⚠️ Prowler não encontrado no PATH atual:"
-  echo "$PATH"
-  echo "🔎 Tentando localizar binário com find (isso pode demorar alguns segundos)..."
-  PROWLER_PATH=$(find / -type f -name "prowler" 2>/dev/null | head -n 1 || true)
-  if [[ -n "$PROWLER_PATH" ]]; then
-    echo "✅ Prowler localizado em: $PROWLER_PATH"
-    export PATH="$(dirname "$PROWLER_PATH"):$PATH"
-  else
-    echo "❌ Prowler não encontrado em nenhum diretório do contêiner."
-    exit 1
-  fi
-else
-  PROWLER_PATH=$(command -v prowler)
-  echo "✅ Prowler encontrado em: $PROWLER_PATH"
-fi
-
-# Também detecta o próprio script (útil em debug)
-RUN_SCRIPT_PATH=$(find / -type f -name "run-prowler.sh" 2>/dev/null | head -n 1 || true)
+# Detecta o caminho do próprio script (debug)
+RUN_SCRIPT_PATH=$(realpath "$0" 2>/dev/null || true)
 if [[ -n "$RUN_SCRIPT_PATH" ]]; then
-  echo "🧩 Script em execução localizado em: $RUN_SCRIPT_PATH"
+  echo "🧩 Script em execução: $RUN_SCRIPT_PATH"
 else
-  echo "⚠️ Não foi possível determinar o caminho do run-prowler.sh (execução pode prosseguir)"
+  echo "⚠️ Caminho absoluto do script não pôde ser determinado"
 fi
 
 # === VARIÁVEIS OBRIGATÓRIAS ===
@@ -89,11 +70,12 @@ upload_to_s3() {
   }
 }
 
-# === Execução genérica ===
+# === Função genérica de execução ===
 run_prowler_generic() {
   local provider="$1"
   local id="$2"
-  local extra_args=("${@:3}")
+  shift 2
+  local extra_args=("$@")
 
   echo "🚀 Executando Prowler para ${provider^^} → $id"
   local OUT_FILE="${OUTPUT_DIR}/prowler-output-${id}-${TIMESTAMP}.json"
