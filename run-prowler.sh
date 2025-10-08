@@ -58,7 +58,7 @@ run_prowler_generic() {
     local OUT_FILE="${OUTPUT_DIR}/prowler-output-${id}-${TIMESTAMP}.json"
 
     # Chamada direta e limpa para 'prowler' (Linha 59 na versão original)
-    prowler "$provider" "${extra_args[@]}" \
+    /home/prowler/prowler "$provider" "${extra_args[@]}" \
         --output-formats json-asff \
         --output-filename "$(basename "$OUT_FILE" .json)" \
         --output-directory "$OUTPUT_DIR" \
