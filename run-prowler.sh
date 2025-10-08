@@ -70,6 +70,8 @@ run_prowler_generic() {
 if [[ "\$CLOUD_PROVIDER" == "aws" ]]; then
     echo "☁️  Selecionado AWS"
     if [[ "\$TARGET_ACCOUNTS" == "ALL" ]]; then
+        echo "Variavel PATH : $PATH"
+        echo "---------------------------------"
         echo "🔎 Buscando contas AWS no SSM..."
         TARGET_ACCOUNTS=\$(aws ssm get-parameter \
             --name "/prowler/aws/accounts" \
