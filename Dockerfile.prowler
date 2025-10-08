@@ -2,7 +2,7 @@
 # 🛰️ Dockerfile.prowler - ECS Safe + Debug Ready Build
 # =======================================================
 
-FROM python:3.12.11-slim-bookworm AS build
+FROM public.ecr.aws/docker/library/python:3.12.11-slim-bookworm AS build
 
 LABEL maintainer="https://github.com/wagnermazevedo/multicloudsecassessment"
 LABEL org.opencontainers.image.source="https://github.com/prowler-cloud/prowler"
