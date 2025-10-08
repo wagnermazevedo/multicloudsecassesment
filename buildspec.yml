@@ -22,6 +22,12 @@ phases:
   build:
     commands:
       - echo "=== Construindo imagem Docker ==="
+      - git clone --depth 1 https://github.com/prowler-cloud/prowler.git prowler
+      - cp -r prowler/prowler ./prowler
+      - cp -r prowler/dashboard ./dashboard
+      - cp prowler/pyproject.toml .
+      - cp prowler/README.md .
+      - docker build -t prowler-repo -f Dockerfile.prowler .
       - docker build -t prowler-repo -f Dockerfile.prowler .
       - docker tag prowler-repo:latest "$ECR_REPO:latest"
 
@@ -33,6 +39,7 @@ phases:
 
 artifacts:
   files: []
+
 
 
 
