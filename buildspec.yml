@@ -29,10 +29,12 @@ phases:
     commands:
       - echo "=== Publicando imagem no ECR ==="
       - docker push "$ECR_REPO:latest"
+      - /usr/local/bin/prowler --version || (echo "❌ Falha na execução do Prowler após linkagem." && exit 1)
       - echo "=== Build concluído com sucesso ==="
 
 artifacts:
   files: []
+
 
 
 
