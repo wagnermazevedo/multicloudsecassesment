@@ -46,7 +46,10 @@ USER prowler
 WORKDIR /home/prowler
 
 # === 5. Clona o código do Prowler diretamente do GitHub ===
-RUN git clone --depth 1 https://github.com/prowler-cloud/prowler.git /home/prowler/prowler
+#RUN git clone --depth 1 https://github.com/prowler-cloud/prowler.git /home/prowler/prowler
+#RUN git clone --depth 1 https://github.com/prowler-cloud/prowler.git /home/prowler/prowler
+WORKDIR /home/prowler/prowler
+
 
 # === 6. Instala dependências Python (via Poetry) ===
 ENV HOME='/home/prowler'
