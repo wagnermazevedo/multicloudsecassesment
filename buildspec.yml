@@ -23,18 +23,18 @@ phases:
   build:
     commands:
       - echo "=== 3. Construindo imagem Docker ==="
-      - 'docker build -t ${ECR_REPO_NAME}:latest -f Dockerfile.prowler .'
-      - 'docker tag ${ECR_REPO_NAME}:latest ${ECR_REPO_URI}:latest'
+      - "docker build -t ${ECR_REPO_NAME}\:latest -f Dockerfile.prowler ."
+      - "docker tag ${ECR_REPO_NAME}\:latest ${ECR_REPO_URI}\:latest"
 
   post_build:
     commands:
       - echo "=== 4. Publicando imagem no ECR ==="
-      - 'docker push ${ECR_REPO_URI}:latest'
+      - "docker push ${ECR_REPO_URI}\:latest"
       - export NEW_IMAGE_URI="${ECR_REPO_URI}:latest"
       - echo "Nova imagem publicada: $NEW_IMAGE_URI"
 
       - echo "=== 5. Verificando script ECS ==="
-      - 'if [ ! -f "./update-task-definition.sh" ]; then echo "❌ ERRO: ./update-task-definition.sh não encontrado"; exit 1; fi'
+      - "if [ ! -f ./update-task-definition.sh ]; then echo '❌ ERRO: ./update-task-definition.sh não encontrado'; exit 1; fi"
 
       - echo "=== 6. Corrigindo permissões e formato do script ==="
       - apt-get update -y
@@ -44,11 +44,13 @@ phases:
       - ls -l ./update-task-definition.sh
 
       - echo "=== 7. Executando script de atualização ECS ==="
-      - './update-task-definition.sh "${NEW_IMAGE_URI}"'
+      - "./update-task-definition.sh ${NEW_IMAGE_URI}"
 
       - echo "=== 8. Build e atualização ECS concluídos ==="
 
 artifacts:
   files: []
+
+
 
 
