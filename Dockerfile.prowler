@@ -1,56 +1,55 @@
 # =======================================================
-# Dockerfile.prowler - Otimizado e com PATH Forçado (Última Correção)
+# Dockerfile.prowler - Instalação Forçada no PATH (/usr/local)
 # =======================================================
 
 FROM public.ecr.aws/docker/library/python:3.11-slim
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 
 USER root
 
+# === Variáveis de versão ===
 ENV AWS_CLI_VERSION=2.15.55
 
-# === 1. Dependências do Sistema ===
+# === 1. Dependências do sistema ===
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
-        git bash build-essential libffi-dev libssl-dev pkg-config \
-        curl jq unzip dos2unix && \
+        git \
+        bash \
+        build-essential \
+        libffi-dev \
+        libssl-dev \
+        pkg-config \
+        curl \
+        jq \
+        unzip \
+        dos2unix && \
     rm -rf /var/lib/apt/lists/*
 
 # === 2. Instalação do AWS CLI v2 ===
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" -o "awscliv2.zip" && \
-    unzip awscliv2.zip && \
+RUN curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" -o "awscliv2.zip" && \
+    unzip -q awscliv2.zip && \
     ./aws/install && \
     rm -rf awscliv2.zip ./aws
 
-# === 3. Instalação do Prowler (Correto e Forçado) ===
-RUN echo "🐍 Instalando Prowler (última versão estável)..." && \
+# === 3. Instalação do Prowler (forçada em /usr/local) ===
+RUN echo "🐍 Instalando Prowler em /usr/local ..." && \
     pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir prowler
+    pip install --no-cache-dir --prefix=/usr/local prowler-cli && \
+    echo "✅ Verificando instalação do Prowler..." && \
+    /usr/local/bin/prowler --version
 
-# === 4. Validação e Força de Link para /usr/local/bin (CORREÇÃO DE SINTAXE) ===
-RUN echo "🔍 Validando instalação e corrigindo PATH..." && \
-    # 1. Tenta encontrar o prowler em locais comuns após o pip.
-    PROWLER_PATH=$(find /usr/local/bin /usr/bin /root/.local/bin /opt -name prowler -type f -executable | head -n 1 || true) && \
-    \
-    if [ -z "$PROWLER_PATH" ]; then \
-        echo "❌ ERRO CRÍTICO: Prowler não foi encontrado em nenhum diretório após a instalação." && exit 1; \
-    fi && \
-    \
-    echo "✅ Prowler encontrado em: $PROWLER_PATH" && \
-    \
-    # 2. Se não estiver no local ideal (/usr/local/bin), criamos o link.
-    if [[ "$PROWLER_PATH" != "/usr/local/bin/prowler" ]]; then \
-        echo "🔗 Criando link simbólico de $PROWLER_PATH para /usr/local/bin/prowler" && \
-        ln -sf "$PROWLER_PATH" /usr/local/bin/prowler; \
-    fi && \
-    \
-    # 3. Teste final.
-    /usr/local/bin/prowler --version || (echo "❌ Falha na execução do Prowler após linkagem." && exit 1)
-
-# === 5. Scripts e EntryPoint ===
+# === 4. Copia o script de execução ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
-# Garante a prioridade do PATH no EntryPoint
-ENV PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin"
+# === 5. Ajusta PATH global (redundante, mas seguro) ===
+ENV PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# === 6. Validação final (build-time sanity check) ===
+RUN echo "🔍 Verificação final de binários:" && \
+    which prowler && prowler --version && \
+    which aws && aws --version && \
+    echo "✅ Ambiente Prowler finalizado com sucesso."
 
 ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
+
