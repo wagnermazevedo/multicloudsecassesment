@@ -39,6 +39,7 @@ RUN echo "🐍 Instalando Prowler em /usr/local ..." && \
 
 # === 4. Copia o script de execução ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
+COPY prowler /usr/local/bin/prowler
 RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
 # === 5. Ajusta PATH global (redundante, mas seguro) ===
