@@ -99,7 +99,7 @@ run_prowler_generic() {
         upload_to_s3 "\$OUT_FILE" "\$id"
     else
         echo "❌ Arquivo não encontrado para \$id"
-    fi
+    }
 }
 
 # === AWS ===
@@ -165,7 +165,7 @@ if [[ "\$CLOUD_PROVIDER" == "gcp" ]]; then
 
     for PROJECT in \$(echo "\$TARGET_ACCOUNTS" | tr ',' ' '); do
         run_prowler_generic gcp "\$PROJECT" --project-id "\$PROJECT"
-    done
+    \done
 fi
 
 echo "🧾 === Execução finalizada. Relatórios gerados: ==="
@@ -241,6 +241,7 @@ echo "====================================================="
 rm "\$TASK_DEF_FILE" "\$TASK_DEF_UPDATED_FILE"
 EOF
 
+      # === 3. FINALIZAÇÃO DA CRIAÇÃO DE SCRIPTS ===
       - chmod +x run-prowler.sh update-task-definition.sh
 
   build:
@@ -264,3 +265,4 @@ EOF
 
 artifacts:
   files: []
+
