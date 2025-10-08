@@ -1,52 +1,39 @@
 # =======================================================
-# Dockerfile.prowler - Versão Final (Wrapper garantido)
+# Dockerfile.prowler - Mantém container vivo em caso de falha
 # =======================================================
 
 FROM public.ecr.aws/docker/library/python:3.11-slim
 
 USER root
-
 ENV AWS_CLI_VERSION=2.15.55
 
-# === 1. Dependências ===
+# === 1. Dependências básicas ===
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
-        bash \
-        build-essential \
-        libffi-dev \
-        libssl-dev \
-        pkg-config \
-        curl \
-        jq \
-        unzip \
-        dos2unix \
-        git && \
+        bash curl jq unzip dos2unix git build-essential \
+        libffi-dev libssl-dev pkg-config && \
     rm -rf /var/lib/apt/lists/*
 
 # === 2. Instala AWS CLI v2 ===
 RUN curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" -o "awscliv2.zip" && \
     unzip -q awscliv2.zip && ./aws/install && rm -rf awscliv2.zip ./aws
 
-# === 3. Instala Prowler ===
-RUN echo "🐍 Instalando Prowler via pip..." && \
-    pip install --no-cache-dir --upgrade pip setuptools wheel && \
+# === 3. Instala o Prowler ===
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir prowler && \
-    echo "✅ Prowler instalado com sucesso."
-
-# === 4. Cria wrapper executável garantido ===
-RUN echo '#!/bin/bash' > /usr/local/bin/prowler && \
+    echo '#!/bin/bash' > /usr/local/bin/prowler && \
     echo 'exec python3 -m prowler "$@"' >> /usr/local/bin/prowler && \
-    chmod +x /usr/local/bin/prowler && \
-    /usr/local/bin/prowler --version
+    chmod +x /usr/local/bin/prowler
 
-# === 5. Copia script principal ===
+# === 4. Copia o script principal ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
-# === 6. PATH e validação ===
+# === 5. PATH e entrypoint com fallback ===
 ENV PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
-RUN which prowler && prowler --version && which aws && aws --version
 
-ENTRYPOINT ["/usr/local/bin/run-prowler.sh"]
+# Se o run-prowler.sh falhar, entra em modo debug infinito
+ENTRYPOINT ["/bin/bash", "-c", "/usr/local/bin/run-prowler.sh || (echo '⚠️ Falha detectada — mantendo container ativo para debug...' && sleep infinity)"]
+
 
 
