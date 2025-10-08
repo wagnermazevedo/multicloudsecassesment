@@ -58,11 +58,6 @@ RUN git clone --depth 1 https://github.com/prowler-cloud/prowler.git /home/prowl
 
 # Copia o restante dos artefatos necessários (dashboard, pyproject etc.)
 WORKDIR /home/prowler
-COPY prowler/  /home/prowler/prowler/
-COPY dashboard/ /home/prowler/dashboard/
-COPY pyproject.toml /home/prowler/
-COPY README.md /home/prowler/
-COPY prowler/providers/m365/lib/powershell/m365_powershell.py /home/prowler/prowler/providers/m365/lib/powershell/m365_powershell.py
 
 # =======================================================
 # 6️⃣ Instala Poetry e dependências do Prowler
