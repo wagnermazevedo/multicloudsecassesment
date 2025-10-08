@@ -24,26 +24,26 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION
 # === 3. Instalação do Prowler (Correto e Forçado) ===
 RUN echo "🐍 Instalando Prowler (última versão estável)..." && \
     pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    # Nome correto do pacote: 'prowler'
     pip install --no-cache-dir prowler
 
-# === 4. Validação e Força de Link para /usr/local/bin (SOLUÇÃO DE PATH) ===
+# === 4. Validação e Força de Link para /usr/local/bin (CORREÇÃO DE SINTAXE) ===
 RUN echo "🔍 Validando instalação e corrigindo PATH..." && \
-    # Tenta encontrar o prowler em locais comuns após o pip.
+    # 1. Tenta encontrar o prowler em locais comuns após o pip.
     PROWLER_PATH=$(find /usr/local/bin /usr/bin /root/.local/bin /opt -name prowler -type f -executable | head -n 1 || true) && \
-    
-    if [ -z "$PROWLER_PATH" ]; then
-        echo "❌ ERRO CRÍTICO: Prowler não foi encontrado em nenhum diretório após a instalação." && exit 1;
+    \
+    if [ -z "$PROWLER_PATH" ]; then \
+        echo "❌ ERRO CRÍTICO: Prowler não foi encontrado em nenhum diretório após a instalação." && exit 1; \
     fi && \
-    
+    \
     echo "✅ Prowler encontrado em: $PROWLER_PATH" && \
-    
-    # Se não estiver no local ideal (/usr/local/bin), criamos o link para que o Shell o encontre.
-    if [[ "$PROWLER_PATH" != "/usr/local/bin/prowler" ]]; then
+    \
+    # 2. Se não estiver no local ideal (/usr/local/bin), criamos o link.
+    if [[ "$PROWLER_PATH" != "/usr/local/bin/prowler" ]]; then \
         echo "🔗 Criando link simbólico de $PROWLER_PATH para /usr/local/bin/prowler" && \
-        ln -sf "$PROWLER_PATH" /usr/local/bin/prowler;
+        ln -sf "$PROWLER_PATH" /usr/local/bin/prowler; \
     fi && \
-    
+    \
+    # 3. Teste final.
     /usr/local/bin/prowler --version || (echo "❌ Falha na execução do Prowler após linkagem." && exit 1)
 
 # === 5. Scripts e EntryPoint ===
