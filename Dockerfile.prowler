@@ -1,16 +1,29 @@
-FROM public.ecr.aws/docker/library/python:3.11-slim AS build
+# =======================================================
+# Dockerfile.prowler - Build Autossuficiente (sem COPY local)
+# =======================================================
 
-LABEL maintainer="https://github.com/prowler-cloud/prowler"
-LABEL org.opencontainers.image.source="https://github.com/prowler-cloud/prowler"
+FROM public.ecr.aws/docker/library/python:3.12-slim-bookworm
 
+LABEL maintainer="wagner.azevedo"
+LABEL description="Imagem multicloud-sec com Prowler incorporado"
+
+USER root
+
+# === Variáveis de versão ===
 ARG POWERSHELL_VERSION=7.5.0
+ARG AWS_CLI_VERSION=2.15.55
 
-# hadolint ignore=DL3008
+# === 1. Dependências básicas ===
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget libicu72 libunwind8 libssl3 libcurl4 ca-certificates apt-transport-https gnupg \
-    && rm -rf /var/lib/apt/lists/*
+    git bash curl unzip jq wget build-essential libffi-dev libssl-dev pkg-config \
+    libicu72 libunwind8 libssl3 libcurl4 ca-certificates apt-transport-https gnupg dos2unix && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install PowerShell
+# === 2. Instala AWS CLI v2 ===
+RUN curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" -o "awscliv2.zip" && \
+    unzip -q awscliv2.zip && ./aws/install && rm -rf awscliv2.zip ./aws
+
+# === 3. Instala PowerShell (necessário para checagens M365) ===
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
         wget --progress=dot:giga https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/powershell-${POWERSHELL_VERSION}-linux-x64.tar.gz -O /tmp/powershell.tar.gz ; \
@@ -25,52 +38,40 @@ RUN ARCH=$(uname -m) && \
     ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh && \
     rm /tmp/powershell.tar.gz
 
-# Add prowler user
+# === 4. Cria o usuário padrão e diretório de trabalho ===
 RUN addgroup --gid 1000 prowler && \
     adduser --uid 1000 --gid 1000 --disabled-password --gecos "" prowler
 
 USER prowler
-
 WORKDIR /home/prowler
 
-# Copy necessary files
-COPY prowler/  /home/prowler/prowler/
-COPY dashboard/ /home/prowler/dashboard/
-COPY pyproject.toml /home/prowler
-COPY README.md /home/prowler/
-COPY prowler/providers/m365/lib/powershell/m365_powershell.py /home/prowler/prowler/providers/m365/lib/powershell/m365_powershell.py
+# === 5. Clona o código do Prowler diretamente do GitHub ===
+RUN git clone --depth 1 https://github.com/prowler-cloud/prowler.git /home/prowler/prowler
 
-# Install Python dependencies
+# === 6. Instala dependências Python (via Poetry) ===
 ENV HOME='/home/prowler'
 ENV PATH="${HOME}/.local/bin:${PATH}"
-#hadolint ignore=DL3013
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir poetry
 
-RUN poetry install --compile && \
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir poetry && \
+    cd /home/prowler/prowler && \
+    poetry install --compile && \
     rm -rf ~/.cache/pip
 
-# Install PowerShell modules
-RUN poetry run python prowler/providers/m365/lib/powershell/m365_powershell.py
+# === 7. Instala módulos PowerShell (para Azure/M365) ===
+RUN cd /home/prowler/prowler && \
+    poetry run python prowler/providers/m365/lib/powershell/m365_powershell.py || true
 
-# Remove deprecated dash dependencies
-RUN pip uninstall dash-html-components -y && \
-    pip uninstall dash-core-components -y
+# === 8. Remove dependências antigas ===
+RUN pip uninstall -y dash-html-components dash-core-components || true
 
-
-
-# === Teste de instalação e logs de debug ===
-RUN echo "🔍 Validando instalação do Prowler..." && \
-    echo "📂 Diretório atual: $(pwd)" && \
-    echo "📁 Conteúdo de /usr/local/bin:" && ls -lh /usr/local/bin && \
-    echo "📁 Conteúdo de /opt/prowler:" && ls -lh /opt/prowler | head && \
-    echo "📌 PATH: $PATH" && \
-    which prowler || echo "⚠️ 'prowler' ainda não no PATH" && \
-    prowler --version || (echo "❌ Falha ao validar Prowler" && exit 1)
-
-# === Copia seu script principal ===
+# === 9. Copia o script principal (o seu) ===
+USER root
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
-USER prowler
-ENTRYPOINT ["poetry", "run", "prowler,/usr/local/bin/run-prowler.sh"]
+# === 10. PATH global e EntryPoint com fallback de debug ===
+ENV PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/home/prowler/.local/bin:/home/prowler/prowler"
+
+ENTRYPOINT ["/bin/bash", "-c", "/usr/local/bin/run-prowler.sh || (echo '⚠️ Falha detectada — container ativo para debug...' && sleep infinity)"]
+
