@@ -1,4 +1,3 @@
-cat <<EOF > run-prowler.sh
 #!/bin/bash
 set -euo pipefail
 
