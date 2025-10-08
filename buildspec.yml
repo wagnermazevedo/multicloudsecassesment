@@ -34,13 +34,11 @@ phases:
       - echo "Nova imagem publicada: $NEW_IMAGE_URI"
 
       - echo "=== 5. Verificando script ECS ==="
-      - if [ ! -f "./update-task-definition.sh" ]; then
-          echo "❌ ERRO: Arquivo ./update-task-definition.sh não encontrado.";
-          exit 1;
-        fi
+      - if [ ! -f "./update-task-definition.sh" ]; then echo '❌ ERRO: ./update-task-definition.sh não encontrado'; exit 1; fi
 
       - echo "=== 6. Corrigindo permissões e conversão de formato ==="
-      - apt-get update -y && apt-get install -y dos2unix
+      - apt-get update -y
+      - apt-get install -y dos2unix
       - dos2unix ./update-task-definition.sh || true
       - chmod +x ./update-task-definition.sh
       - ls -l ./update-task-definition.sh
