@@ -6,46 +6,49 @@ env:
     AWS_REGION: "us-east-1"
     AWS_ACCOUNT_ID: "057959860487"
     ECR_REPO_NAME: "multicloud-prowler-repo"
-    IMAGE_TAG: "latest"
-    # Variáveis de Task Definition (AJUSTE ESTES VALORES!)
-    TASK_FAMILY: "multicloud-prowler-task"
-    CONTAINER_NAME: "prowler-runner"
+    ECR_REPO_URI: "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo"
 
 phases:
   install:
     commands:
-      # Instalação: Garante que o jq esteja disponível
-      - echo "=== Instalando e Validando Dependências (jq) ==="
-      - if ! command -v jq &> /dev/null; then echo "Instalando jq..."; apt-get update && apt-get install -y jq; fi
+      - echo "=== 1. Validando dependências do ambiente ==="
       - aws --version
       - docker --version
 
   pre_build:
     commands:
-      # === 1. LOGIN E DEFINIÇÕES ===
-      - echo "=== Login no ECR e Definições ==="
-      - FULL_ECR_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
-      - NEW_IMAGE_URI="$FULL_ECR_URI/$ECR_REPO_NAME:$IMAGE_TAG"
-      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin "$FULL_ECR_URI"
+      - echo "=== 2. Login no Amazon ECR ==="
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin "$ECR_REPO_URI"
 
   build:
     commands:
-      # Build: Focado em construir e taguear
-      - echo "=== Construindo imagem Docker ==="
-      - docker build -t prowler-repo-local -f Dockerfile.prowler .
-      - docker tag prowler-repo-local:latest "$NEW_IMAGE_URI"
+      - echo "=== 3. Construindo imagem Docker ==="
+      - docker build -t "$ECR_REPO_NAME:latest" -f Dockerfile.prowler .
+      - docker tag "$ECR_REPO_NAME:latest" "$ECR_REPO_URI:latest"
 
   post_build:
     commands:
-      # Deploy: Focado em push e atualização da Task Definition
-      - echo "=== 1. Publicando imagem no ECR ==="
-      - docker push "$NEW_IMAGE_URI"
+      - echo "=== 4. Publicando imagem no ECR ==="
+      - docker push "$ECR_REPO_URI:latest"
+      - export NEW_IMAGE_URI="$ECR_REPO_URI:latest"
+      - echo "Nova imagem publicada: $NEW_IMAGE_URI"
 
-      - echo "=== 2. Executando Atualização da Definição de Tarefa ECS ==="
-      - export NEW_IMAGE_URI="$NEW_IMAGE_URI" # Garante que a variável seja passada
-      - ./update-task-definition.sh
+      - echo "=== 5. Verificando script ECS ==="
+      - if [ ! -f "./update-task-definition.sh" ]; then
+          echo "❌ ERRO: Arquivo ./update-task-definition.sh não encontrado.";
+          exit 1;
+        fi
 
-      - echo "=== Build e Deploy Concluídos com Sucesso ==="
+      - echo "=== 6. Corrigindo permissões e conversão de formato ==="
+      - apt-get update -y && apt-get install -y dos2unix
+      - dos2unix ./update-task-definition.sh || true
+      - chmod +x ./update-task-definition.sh
+      - ls -l ./update-task-definition.sh
+
+      - echo "=== 7. Executando script de atualização ECS ==="
+      - ./update-task-definition.sh "$NEW_IMAGE_URI"
+
+      - echo "=== 8. Build e atualização ECS concluídos ==="
 
 artifacts:
   files: []
