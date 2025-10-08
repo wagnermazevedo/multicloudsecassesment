@@ -59,7 +59,7 @@ run_prowler_generic() {
 
     # Chamada direta e limpa para 'prowler' (Linha 59 na versão original)
     pwd && echo $PATH && ls /home && ls /home/prowler/ && find / -name "*prowler*" -print && sleep 30 
-    /home/prowler/prowler "$provider" "${extra_args[@]}" \
+    python3 -m prowler "$provider" "${extra_args[@]}" \
         --output-formats json-asff \
         --output-filename "$(basename "$OUT_FILE" .json)" \
         --output-directory "$OUTPUT_DIR" \
