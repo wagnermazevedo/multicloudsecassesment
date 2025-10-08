@@ -44,7 +44,6 @@ RUN echo "🔍 Validando instalação e corrigindo PATH..." && \
     fi && \
     \
     # 3. Teste final.
-    echo "Caminho do Prowler : $PROWLER_PATH"
     /usr/local/bin/prowler --version || (echo "❌ Falha na execução do Prowler após linkagem." && exit 1)
 
 # === 5. Scripts e EntryPoint ===
