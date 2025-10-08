@@ -3,10 +3,10 @@ version: 0.2
 
 env:
   variables:
-    AWS_REGION: "us-east-1"
-    AWS_ACCOUNT_ID: "057959860487"
-    ECR_REPO_NAME: "multicloud-prowler-repo"
-    ECR_REPO_URI: "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo"
+    AWS_REGION: us-east-1
+    AWS_ACCOUNT_ID: 057959860487
+    ECR_REPO_NAME: multicloud-prowler-repo
+    ECR_REPO_URI: 057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo
 
 phases:
   install:
@@ -18,19 +18,19 @@ phases:
   pre_build:
     commands:
       - echo "=== 2. Login no Amazon ECR ==="
-      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin "$ECR_REPO_URI"
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO_URI
 
   build:
     commands:
       - echo "=== 3. Construindo imagem Docker ==="
-      - docker build -t "$ECR_REPO_NAME:latest" -f Dockerfile.prowler .
-      - docker tag "$ECR_REPO_NAME:latest" "$ECR_REPO_URI:latest"
+      - docker build -t $ECR_REPO_NAME:latest -f Dockerfile.prowler .
+      - docker tag $ECR_REPO_NAME:latest $ECR_REPO_URI:latest
 
   post_build:
     commands:
       - echo "=== 4. Publicando imagem no ECR ==="
-      - docker push "$ECR_REPO_URI:latest"
-      - export NEW_IMAGE_URI="$ECR_REPO_URI:latest"
+      - docker push $ECR_REPO_URI:latest
+      - export NEW_IMAGE_URI=$ECR_REPO_URI:latest
       - echo "Nova imagem publicada: $NEW_IMAGE_URI"
 
       - echo "=== 5. Verificando script ECS ==="
@@ -44,10 +44,12 @@ phases:
       - ls -l ./update-task-definition.sh
 
       - echo "=== 7. Executando script de atualização ECS ==="
-      - ./update-task-definition.sh "$NEW_IMAGE_URI"
+      - ./update-task-definition.sh $NEW_IMAGE_URI
 
       - echo "=== 8. Build e atualização ECS concluídos ==="
 
 artifacts:
   files: []
+
+
 
