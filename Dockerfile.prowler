@@ -2,13 +2,15 @@
 # Dockerfile.prowler - Mantém container vivo em caso de falha
 # =======================================================
 
-FROM public.ecr.aws/docker/library/python:3.11-slim
+#FROM public.ecr.aws/docker/library/python:3.11-slim
+FROM public.ecr.aws/ubuntu/ubuntu:22.04
 
 USER root
 ENV AWS_CLI_VERSION=2.15.55
 
 # === 1. Dependências básicas ===
-RUN apt-get update -y && \
+RUN apt-get update && \
+    apt-get install -y python3 python3-pip git unzip curl build-essential && \
     apt-get install -y --no-install-recommends \
         bash curl jq unzip dos2unix git build-essential \
         libffi-dev libssl-dev pkg-config && \
@@ -18,12 +20,22 @@ RUN apt-get update -y && \
 RUN curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" -o "awscliv2.zip" && \
     unzip -q awscliv2.zip && ./aws/install && rm -rf awscliv2.zip ./aws
 
+# 2. Clonar Prowler
+RUN git clone https://github.com/prowler-cloud/prowler.git /prowler
+
+WORKDIR /prowler
+
+
+
 # === 3. Instala o Prowler ===
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir prowler && \
-    echo '#!/bin/bash' > /usr/local/bin/prowler && \
-    echo 'exec python3 -m prowler "$@"' >> /usr/local/bin/prowler && \
-    chmod +x /usr/local/bin/prowler
+#RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+#    pip install --no-cache-dir prowler && \
+#    echo '#!/bin/bash' > /usr/local/bin/prowler && \
+#    echo 'exec python3 -m prowler "$@"' >> /usr/local/bin/prowler && \
+#    chmod +x /usr/local/bin/prowler
+
+
+
 
 # === 4. Copia o script principal ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
