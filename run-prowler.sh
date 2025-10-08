@@ -1,16 +1,19 @@
 #!/bin/bash
 set -euo pipefail
 
+#!/bin/bash
+set -euo pipefail
+
+# 🚩 CORREÇÃO CRÍTICA: GARANTE O PATH COMPLETO PARA O SHELL DO ENTRYPOINT
+export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin"
+
 # === DIAGNÓSTICO INICIAL (Removendo a Lógica de Instalação e Path) ===
-
-# O bloco de 21 linhas de 'LOCALIZAÇÃO E INSTALAÇÃO DO PROWLER' foi REMOVIDO.
-# O Dockerfile garante a instalação do Prowler em /usr/local/bin.
-
-# 1. Teste de Sanidade Final (Novo)
+# O restante do script agora confia que o 'prowler' está no PATH
 if ! command -v prowler &> /dev/null; then
     echo "❌ Erro Crítico: 'prowler' não encontrado no PATH! O Dockerfile falhou na instalação."
     exit 1
 fi
+# ... (o restante do script run-prowler.sh continua aqui)
 
 echo "✅ Prowler pronto para uso: $(command -v prowler)"
 prowler --version || echo "⚠️ Não foi possível exibir a versão do prowler."
