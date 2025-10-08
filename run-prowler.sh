@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # CORREÇÃO CRÍTICA: Força o PATH para que o 'prowler' seja encontrado no Entrypoint
-export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin"
+export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin:/prowler"
 
 # === DIAGNÓSTICO INICIAL ===
 if ! command -v prowler &> /dev/null; then
