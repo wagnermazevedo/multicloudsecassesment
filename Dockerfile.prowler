@@ -33,7 +33,7 @@ RUN curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERS
 # === 3. Instalação do Prowler (forçada em /usr/local) ===
 RUN echo "🐍 Instalando Prowler em /usr/local ..." && \
     pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir --prefix=/usr/local/bin prowler && \
+    pip install --no-cache-dir --prefix=/usr/local prowler && \
     echo "✅ Verificando instalação do Prowler..." && \
     /usr/local/bin/prowler --version
 
