@@ -46,9 +46,14 @@ RUN addgroup --gid 1000 prowler && \
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
-# === 7. Permissões e ambiente ===
-USER prowler
-WORKDIR /home/prowler
+# === 7. Normaliza permissões e formato de linha (CRLF → LF) ===
+USER root
+RUN apt-get update -y && apt-get install -y --no-install-recommends dos2unix && \
+    dos2unix /usr/local/bin/run-prowler.sh && \
+    sed -i '1s|^.*$|#!/usr/bin/env bash|' /usr/local/bin/run-prowler.sh && \
+    chmod +x /usr/local/bin/run-prowler.sh && \
+    chown -R prowler:prowler /home/prowler
+
 
 ENV PYTHONUNBUFFERED=1 \
     PATH="/home/prowler/.local/bin:/usr/local/bin:/usr/bin:/bin"
