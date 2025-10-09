@@ -1,191 +1,224 @@
-#!/bin/bash
-set -euo pipefail
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
 # ============================================================
-# 🔧 FIX DEFINITIVO: Garante que o binário do Prowler seja localizado
-# mesmo que o PATH do container não carregue automaticamente o virtualenv
+# Prowler Runner – robusto para qualquer ambiente/venv
 # ============================================================
 
-# Caminho base e PATH padrão
-export PATH="/home/prowler/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-cd /home/prowler/prowler || {
-    echo "❌ Diretório /home/prowler/prowler não encontrado."
-    exit 1
+# 1) PATH razoável e locais candidatos do projeto
+export PATH="/usr/local/bin:/usr/bin:/bin:/root/.local/bin:/home/prowler/.local/bin:$PATH"
+PROJECT_DIR=""
+
+for d in \
+  "/home/prowler/prowler" \
+  "/opt/prowler" \
+  "/prowler" \
+  "/code/prowler" \
+  "/workspace/prowler"
+do
+  if [[ -d "$d" ]]; then
+    PROJECT_DIR="$d"
+    break
+  fi
+done
+
+if [[ -z "${PROJECT_DIR}" ]]; then
+  echo "❌ Diretório do projeto Prowler não foi encontrado."
+  echo "   Dicas: garanta que o repositório foi clonado/copied para /home/prowler/prowler ou /opt/prowler."
+  exit 1
+fi
+
+cd "$PROJECT_DIR"
+
+# 2) Função para resolver o comando do Prowler
+#    Prioridade: binário no PATH -> venv (root/prowler) -> poetry run -> python -m
+resolve_prowler_cmd() {
+  local -a CANDIDATE_VENV_DIRS=(
+    "/root/.cache/pypoetry/virtualenvs"
+    "/home/prowler/.cache/pypoetry/virtualenvs"
+    "/root/.virtualenvs"
+    "/home/prowler/.virtualenvs"
+  )
+
+  # 2.1 Se já está no PATH, use
+  if command -v prowler >/dev/null 2>&1; then
+    PROWLER_CMD=( "$(command -v prowler)" )
+    echo "🔎 Prowler encontrado no PATH: ${PROWLER_CMD[0]}"
+    return 0
+  fi
+
+  # 2.2 Procura binário do prowler dentro de virtualenvs comuns
+  for base in "${CANDIDATE_VENV_DIRS[@]}"; do
+    if [[ -d "$base" ]]; then
+      # pega o primeiro venv que comece com 'prowler'
+      local venv
+      venv="$(find "$base" -maxdepth 1 -type d -name 'prowler*' | head -n 1 || true)"
+      if [[ -n "$venv" && -x "$venv/bin/prowler" ]]; then
+        export PATH="$venv/bin:$PATH"
+        PROWLER_CMD=( "$venv/bin/prowler" )
+        echo "🔎 Prowler encontrado no venv: $venv"
+        return 0
+      fi
+    fi
+  done
+
+  # 2.3 Tenta poetry run
+  if command -v poetry >/dev/null 2>&1; then
+    if POETRY_ACTIVE_DIR="$(poetry -C "$PROJECT_DIR" env info --path 2>/dev/null || true)"; then
+      if [[ -x "$POETRY_ACTIVE_DIR/bin/prowler" ]]; then
+        export PATH="$POETRY_ACTIVE_DIR/bin:$PATH"
+        PROWLER_CMD=( "$POETRY_ACTIVE_DIR/bin/prowler" )
+        echo "🔎 Prowler do poetry venv: $POETRY_ACTIVE_DIR"
+        return 0
+      fi
+    fi
+    # fallback via poetry run (sem path fixo)
+    PROWLER_CMD=( poetry run prowler )
+    echo "ℹ️ Usando 'poetry run prowler' (fallback)."
+    return 0
+  fi
+
+  # 2.4 Último fallback: python -m prowler
+  if command -v python3 >/dev/null 2>&1; then
+    PROWLER_CMD=( python3 -m prowler )
+    echo "⚠️ Usando 'python3 -m prowler' (fallback)."
+    return 0
+  fi
+
+  return 1
 }
 
-# Detecta virtualenv do Poetry e adiciona ao PATH
-if [ -d "/home/prowler/.cache/pypoetry/virtualenvs" ]; then
-    VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -maxdepth 1 -type d -name "prowler*" | head -n 1 || true)
-    if [ -n "$VENV_PATH" ]; then
-        export PATH="$VENV_PATH/bin:$PATH"
-        echo "✅ Virtualenv detectado e adicionado ao PATH: $VENV_PATH"
-    else
-        echo "⚠️ Nenhum virtualenv encontrado em ~/.cache/pypoetry/virtualenvs"
-    fi
-else
-    echo "⚠️ Diretório ~/.cache/pypoetry/virtualenvs não encontrado"
+if ! resolve_prowler_cmd; then
+  echo "❌ Não foi possível resolver o comando do Prowler."
+  exit 127
 fi
 
-# Diagnóstico
-echo "🔧 PATH atual: $PATH"
-if ! command -v prowler &>/dev/null; then
-    echo "⚠️ prowler ainda não acessível — tentando localizar manualmente..."
-    PWL_BIN=$(find /home/prowler/.cache/pypoetry/virtualenvs -type f -name prowler | head -n 1 || true)
-    if [ -n "$PWL_BIN" ]; then
-        echo "✅ Encontrado binário: $PWL_BIN"
-        alias prowler="$PWL_BIN"
-        export PATH="$(dirname "$PWL_BIN"):$PATH"
-    else
-        echo "❌ Erro crítico: 'prowler' não encontrado em nenhum caminho válido."
-        exit 127
-    fi
-fi
+# 3) Diagnóstico rápido
+echo "✅ Comando Prowler: ${PROWLER_CMD[*]}"
+( "${PROWLER_CMD[@]}" --version || true ) 2>&1 | sed 's/^/   > /'
+echo "📂 PWD: $(pwd)"
+echo "👤 User: $(whoami)"
+echo "🔧 PATH: $PATH"
 
-echo "✅ Prowler pronto para uso: $(command -v prowler)"
-prowler --version || echo "⚠️ Não foi possível exibir a versão do prowler."
-
-echo "🛰️ === Iniciando execução do Prowler Runner ==="
-echo "📂 Diretório atual: $(pwd)"
-echo "👤 Usuário atual: $(whoami)"
-
-# ============================================================
-# 🌩️ VARIÁVEIS OBRIGATÓRIAS
-# ============================================================
+# 4) Variáveis obrigatórias
 : "${CLOUD_PROVIDER:?❌ CLOUD_PROVIDER não definido (aws | azure | gcp)}"
 : "${TARGET_ACCOUNTS:?❌ TARGET_ACCOUNTS não definido (IDs separados por vírgula ou ALL)}"
 
 REGION="${AWS_REGION:-us-east-1}"
 BUCKET="my-prowler-results"
-TIMESTAMP=$(date +%Y%m%d%H%M)
+TIMESTAMP="$(date +%Y%m%d%H%M)"
 OUTPUT_DIR="/tmp"
 OUTPUTS=()
 
-CLOUD_PROVIDER=$(echo "$CLOUD_PROVIDER" | tr '[:upper:]' '[:lower:]')
+CLOUD_PROVIDER="$(echo "$CLOUD_PROVIDER" | tr '[:upper:]' '[:lower:]')"
 
-# ============================================================
-# 📤 Função: Upload para S3
-# ============================================================
+# 5) Upload S3
 upload_to_s3() {
-    local file="$1"
-    local account="$2"
-    local dest="s3://${BUCKET}/${CLOUD_PROVIDER}/${account}/${TIMESTAMP}/$(basename "$file")"
-    echo "📤 Enviando $file → $dest"
-    aws s3 cp "$file" "$dest" --acl bucket-owner-full-control || {
-        echo "❌ Falha no upload de $file"
-        return 1
-    }
+  local file="$1"
+  local account="$2"
+  local dest="s3://${BUCKET}/${CLOUD_PROVIDER}/${account}/${TIMESTAMP}/$(basename "$file")"
+  echo "📤 Enviando $file → $dest"
+  aws s3 cp "$file" "$dest" --acl bucket-owner-full-control || {
+    echo "❌ Falha no upload de $file"
+    return 1
+  }
 }
 
-# ============================================================
-# 🚀 Função: Execução Genérica do Prowler
-# ============================================================
+# 6) Execução genérica
 run_prowler_generic() {
-    local provider="$1"
-    local id="$2"
-    shift 2
-    local extra_args=("$@")
+  local provider="$1"
+  local id="$2"
+  shift 2
+  local extra_args=( "$@" )
 
-    echo "🚀 Executando Prowler para ${provider^^} → $id"
-    local OUT_FILE="${OUTPUT_DIR}/prowler-output-${id}-${TIMESTAMP}.json"
+  echo "🚀 Executando Prowler para ${provider^^} → $id"
+  local out_file="${OUTPUT_DIR}/prowler-output-${id}-${TIMESTAMP}.json"
 
-    # Diagnóstico do ambiente
-    echo "🧭 Verificação de ambiente..."
-    echo "PWD: $(pwd)"
-    echo "PATH: $PATH"
-    echo "Arquivos em /home/prowler:"
-    ls -la /home/prowler | head -n 10
-    echo "🔍 Procurando binário do Prowler..."
-    find /home/prowler/.cache/pypoetry -type f -name "prowler" | head -n 3
+  # Execução principal
+  "${PROWLER_CMD[@]}" "$provider" "${extra_args[@]}" \
+    --output-formats json-asff \
+    --output-filename "$(basename "$out_file" .json)" \
+    --output-directory "$OUTPUT_DIR" \
+    --ignore-exit-code-3
 
-    # Execução principal
-    /home/prowler/.cache/pypoetry/virtualenvs/prowler*/bin/prowler "$provider" "${extra_args[@]}" \
-        --output-formats json-asff \
-        --output-filename "$(basename "$OUT_FILE" .json)" \
-        --output-directory "$OUTPUT_DIR" \
-        --ignore-exit-code-3
-
-    # Upload e verificação
-    if [[ -f "$OUT_FILE" ]]; then
-        echo "✅ Arquivo gerado: $OUT_FILE"
-        OUTPUTS+=("$OUT_FILE")
-        upload_to_s3 "$OUT_FILE" "$id"
-    else
-        echo "❌ Arquivo não encontrado para $id"
-    fi
+  # Upload e verificação
+  if [[ -f "$out_file" ]]; then
+    echo "✅ Arquivo gerado: $out_file"
+    OUTPUTS+=( "$out_file" )
+    upload_to_s3 "$out_file" "$id"
+  else
+    echo "❌ Arquivo não encontrado para $id"
+  fi
 }
 
-# ============================================================
-# ☁️ Execução por Provedor
-# ============================================================
-
-# --- AWS ---
+# 7) Provedor: AWS
 if [[ "$CLOUD_PROVIDER" == "aws" ]]; then
-    echo "☁️  Selecionado AWS"
-    if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
-        echo "🔎 Buscando contas AWS no SSM..."
-        TARGET_ACCOUNTS=$(aws ssm get-parameter \
-            --name "/prowler/aws/accounts" \
-            --query "Parameter.Value" \
-            --output text)
-    fi
+  echo "☁️  Selecionado AWS"
+  if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
+    echo "🔎 Buscando contas AWS no SSM..."
+    TARGET_ACCOUNTS="$(aws ssm get-parameter \
+      --name "/prowler/aws/accounts" \
+      --query "Parameter.Value" \
+      --output text)"
+  fi
 
-    for ACCOUNT_ID in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
-        echo "🎯 Conta alvo: $ACCOUNT_ID"
-        CREDS=$(aws sts assume-role \
-            --role-arn arn:aws:iam::${ACCOUNT_ID}:role/ProwlerAuditRole \
-            --role-session-name prowler-session)
-        export AWS_ACCESS_KEY_ID=$(echo "$CREDS" | jq -r .Credentials.AccessKeyId)
-        export AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | jq -r .Credentials.SecretAccessKey)
-        export AWS_SESSION_TOKEN=$(echo "$CREDS" | jq -r .Credentials.SessionToken)
+  for ACCOUNT_ID in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
+    echo "🎯 Conta alvo: $ACCOUNT_ID"
+    CREDS="$(aws sts assume-role \
+      --role-arn "arn:aws:iam::${ACCOUNT_ID}:role/ProwlerAuditRole" \
+      --role-session-name "prowler-session")"
 
-        run_prowler_generic aws "$ACCOUNT_ID" --region "$REGION"
+    export AWS_ACCESS_KEY_ID="$(echo "$CREDS" | jq -r .Credentials.AccessKeyId)"
+    export AWS_SECRET_ACCESS_KEY="$(echo "$CREDS" | jq -r .Credentials.SecretAccessKey)"
+    export AWS_SESSION_TOKEN="$(echo "$CREDS" | jq -r .Credentials.SessionToken)"
 
-        unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
-    done
+    run_prowler_generic aws "$ACCOUNT_ID" --region "$REGION"
+
+    unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+  done
 fi
 
-# --- AZURE ---
+# 8) Provedor: Azure
 if [[ "$CLOUD_PROVIDER" == "azure" ]]; then
-    echo "☁️  Selecionado Azure"
-    if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
-        echo "🔎 Buscando subscriptions Azure no SSM..."
-        TARGET_ACCOUNTS=$(aws ssm get-parameter \
-            --name "/prowler/azure/subscriptions" \
-            --query "Parameter.Value" \
-            --output text)
-    fi
+  echo "☁️  Selecionado Azure"
+  if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
+    echo "🔎 Buscando subscriptions Azure no SSM..."
+    TARGET_ACCOUNTS="$(aws ssm get-parameter \
+      --name "/prowler/azure/subscriptions" \
+      --query "Parameter.Value" \
+      --output text)"
+  fi
 
-    for SUB in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
-        run_prowler_generic azure "$SUB" --subscription-id "$SUB"
-    done
+  for SUB in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
+    run_prowler_generic azure "$SUB" --subscription-id "$SUB"
+  done
 fi
 
-# --- GCP ---
+# 9) Provedor: GCP
 if [[ "$CLOUD_PROVIDER" == "gcp" ]]; then
-    echo "☁️  Selecionado GCP"
-    if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
-        echo "🔎 Buscando projetos GCP no SSM..."
-        TARGET_ACCOUNTS=$(aws ssm get-parameter \
-            --name "/prowler/gcp/projects" \
-            --query "Parameter.Value" \
-            --output text)
-    fi
+  echo "☁️  Selecionado GCP"
+  if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
+    echo "🔎 Buscando projetos GCP no SSM..."
+    TARGET_ACCOUNTS="$(aws ssm get-parameter \
+      --name "/prowler/gcp/projects" \
+      --query "Parameter.Value" \
+      --output text)"
+  fi
 
-    echo "🔑 Recuperando credenciais de service account..."
-    aws ssm get-parameter \
-        --name "/prowler/gcp/michel/serviceAccountKey" \
-        --with-decryption \
-        --query "Parameter.Value" \
-        --output text | base64 -d > /tmp/prowler-sa.json
-    export GOOGLE_APPLICATION_CREDENTIALS="/tmp/prowler-sa.json"
+  echo "🔑 Recuperando credenciais de service account..."
+  aws ssm get-parameter \
+    --name "/prowler/gcp/michel/serviceAccountKey" \
+    --with-decryption \
+    --query "Parameter.Value" \
+    --output text | base64 -d > /tmp/prowler-sa.json
+  export GOOGLE_APPLICATION_CREDENTIALS="/tmp/prowler-sa.json"
 
-    for PROJECT in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
-        run_prowler_generic gcp "$PROJECT" --project-id "$PROJECT"
-    done
+  for PROJECT in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
+    run_prowler_generic gcp "$PROJECT" --project-id "$PROJECT"
+  done
 fi
 
-# ============================================================
-# 🧾 Resumo final
-# ============================================================
+# 10) Resumo
 echo "🧾 === Execução finalizada. Relatórios gerados: ==="
 printf '%s\n' "${OUTPUTS[@]}"
+
