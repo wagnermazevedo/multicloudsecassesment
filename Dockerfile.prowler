@@ -43,7 +43,8 @@ COPY prowler/providers/m365/lib/powershell/m365_powershell.py /home/prowler/prow
 
 # Install Python dependencies
 ENV HOME='/home/prowler'
-ENV PATH="${HOME}/.local/bin:${PATH}"
+#ENV PATH="${HOME}/.local/bin:${PATH}"
+ENV PATH="${HOME}/.local/bin:${PATH}$PATH:/home/prowler/.cache/pypoetry/virtualenvs/prowler*/bin"
 #hadolint ignore=DL3013
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir poetry
@@ -59,6 +60,12 @@ RUN pip uninstall dash-html-components -y && \
     pip uninstall dash-core-components -y
 
 USER prowler
+RUN cd /home/prowler/prowler && \
+    poetry config virtualenvs.create true && \
+    poetry config virtualenvs.in-project false && \
+    poetry install --no-root --compile && \
+    find /home/prowler/.cache/pypoetry -type f -name prowler
+
 #ENTRYPOINT ["poetry", "run", "prowler"]
 ENTRYPOINT ["poetry", "run", "prowler", "/bin/bash", "-c", "/usr/local/bin/run-prowler.sh || (echo '⚠️ Falha detectada — container ativo para debug...' && sleep infinity)"]
 
