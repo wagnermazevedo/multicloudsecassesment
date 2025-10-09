@@ -1,74 +1,57 @@
 # =======================================================
-# Dockerfile.prowler - versão estável com runtime fixo
+# Dockerfile.prowler - versão leve (instalação via script)
 # =======================================================
 
 FROM public.ecr.aws/docker/library/python:3.12-slim-bookworm
 
 LABEL maintainer="Wagner Azevedo"
-LABEL description="Imagem multi-cloud-sec com Prowler, AWS CLI e PowerShell"
+LABEL description="Imagem base do MultiCloud Prowler Runner (instala pacotes via script runtime)"
 
 USER root
 
-# === Variáveis de versão ===
+# === 1. Variáveis de versão ===
 ARG POWERSHELL_VERSION=7.5.0
 ARG AWS_CLI_VERSION=2.15.55
 
-# === 1. Dependências base ===
-RUN apt-get update -y && apt-get install -y --no-install-recommends \
-    git bash curl unzip jq wget build-essential libffi-dev libssl-dev pkg-config \
-    libicu72 libunwind8 libssl3 libcurl4 ca-certificates apt-transport-https gnupg dos2unix && \
+# === 2. Dependências base mínimas ===
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+        git bash curl unzip jq wget dos2unix ca-certificates apt-transport-https gnupg && \
     rm -rf /var/lib/apt/lists/*
 
-# === 2. AWS CLI ===
+# === 3. Instala AWS CLI ===
 RUN curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" -o "awscliv2.zip" && \
-    unzip -q awscliv2.zip && ./aws/install && rm -rf awscliv2.zip ./aws
+    unzip -q awscliv2.zip && ./aws/install && \
+    rm -rf awscliv2.zip ./aws
 
-# === 3. PowerShell ===
+# === 4. Instala PowerShell (opcional para M365 checks) ===
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
-        wget --progress=dot:giga https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/powershell-${POWERSHELL_VERSION}-linux-x64.tar.gz -O /tmp/pwsh.tar.gz ; \
+        wget -q https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/powershell-${POWERSHELL_VERSION}-linux-x64.tar.gz -O /tmp/pwsh.tar.gz ; \
     else \
-        wget --progress=dot:giga https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/powershell-${POWERSHELL_VERSION}-linux-arm64.tar.gz -O /tmp/pwsh.tar.gz ; \
+        wget -q https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/powershell-${POWERSHELL_VERSION}-linux-arm64.tar.gz -O /tmp/pwsh.tar.gz ; \
     fi && \
     mkdir -p /opt/microsoft/powershell/7 && \
     tar zxf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7 && \
     chmod +x /opt/microsoft/powershell/7/pwsh && \
-    ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh && \
+    ln -sf /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh && \
     rm /tmp/pwsh.tar.gz
 
-# === 4. Cria usuário ===
+# === 5. Cria usuário e diretórios padrão ===
 RUN addgroup --gid 1000 prowler && \
-    adduser --uid 1000 --gid 1000 --disabled-password --gecos "" prowler
-USER prowler
-WORKDIR /home/prowler
+    adduser --uid 1000 --gid 1000 --disabled-password --gecos "" prowler && \
+    mkdir -p /home/prowler && chown -R prowler:prowler /home/prowler
 
-# === 5. Copia arquivos ===
-COPY prowler/ /home/prowler/prowler/
-COPY dashboard/ /home/prowler/dashboard/
-COPY pyproject.toml README.md /home/prowler/
+# === 6. Copia apenas o script (instalações ocorrerão em runtime) ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
+RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
-# === 6. Instala dependências Python ===
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir poetry && \
-    cd /home/prowler/prowler && \
-    poetry config virtualenvs.create true && \
-    poetry config virtualenvs.in-project false && \
-    poetry install --no-root --compile && \
-    rm -rf ~/.cache/pip
-
-# === 7. Normaliza permissões ===
-USER root
-RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh && \
-    chown -R prowler:prowler /home/prowler
-
-# === 8. Retorna ao usuário não privilegiado ===
+# === 7. Permissões e ambiente ===
 USER prowler
 WORKDIR /home/prowler
 
-# === 9. Define variáveis padrão ===
-ENV PATH="/home/prowler/.local/bin:/usr/local/bin:/usr/bin:/bin"
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    PATH="/home/prowler/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
-# === 10. ENTRYPOINT simplificado ===
+# === 8. ENTRYPOINT ===
 ENTRYPOINT ["/bin/bash", "/usr/local/bin/run-prowler.sh"]
