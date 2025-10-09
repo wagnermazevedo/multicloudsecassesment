@@ -61,7 +61,7 @@ run_prowler_generic() {
 
     # Chamada direta e limpa para 'prowler' (Linha 59 na versão original)
     pwd && echo $PATH && ls /home && ls /home/prowler/ && find / -name "*prowler*" -print && sleep 30 
-    poetry run python -m prowler "$provider" "${extra_args[@]}" \
+    /home/prowler/.cache/pypoetry/virtualenvs/prowler*/bin/prowler "$provider" "${extra_args[@]}" \
         --output-formats json-asff \
         --output-filename "$(basename "$OUT_FILE" .json)" \
         --output-directory "$OUTPUT_DIR" \
