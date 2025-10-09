@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # ============================================================
-# Prowler Runner – robusto para qualquer ambiente/venv
+# Prowler Runner – versão robusta e autoinstalável
 # ============================================================
 
 # 1) PATH razoável e locais candidatos do projeto
@@ -24,14 +24,15 @@ done
 
 if [[ -z "${PROJECT_DIR}" ]]; then
   echo "❌ Diretório do projeto Prowler não foi encontrado."
-  echo "   Dicas: garanta que o repositório foi clonado/copied para /home/prowler/prowler ou /opt/prowler."
+  echo "   Garanta que o repositório foi clonado/copied para /home/prowler/prowler ou /opt/prowler."
   exit 1
 fi
 
 cd "$PROJECT_DIR"
 
-# 2) Função para resolver o comando do Prowler
-#    Prioridade: binário no PATH -> venv (root/prowler) -> poetry run -> python -m
+# ============================================================
+# 2) Função para resolver e/ou instalar o Prowler
+# ============================================================
 resolve_prowler_cmd() {
   local -a CANDIDATE_VENV_DIRS=(
     "/root/.cache/pypoetry/virtualenvs"
@@ -40,17 +41,16 @@ resolve_prowler_cmd() {
     "/home/prowler/.virtualenvs"
   )
 
-  # 2.1 Se já está no PATH, use
+  # --- 2.1 Se já está no PATH, usa ---
   if command -v prowler >/dev/null 2>&1; then
     PROWLER_CMD=( "$(command -v prowler)" )
     echo "🔎 Prowler encontrado no PATH: ${PROWLER_CMD[0]}"
     return 0
   fi
 
-  # 2.2 Procura binário do prowler dentro de virtualenvs comuns
+  # --- 2.2 Busca em virtualenvs conhecidos ---
   for base in "${CANDIDATE_VENV_DIRS[@]}"; do
     if [[ -d "$base" ]]; then
-      # pega o primeiro venv que comece com 'prowler'
       local venv
       venv="$(find "$base" -maxdepth 1 -type d -name 'prowler*' | head -n 1 || true)"
       if [[ -n "$venv" && -x "$venv/bin/prowler" ]]; then
@@ -62,7 +62,29 @@ resolve_prowler_cmd() {
     fi
   done
 
-  # 2.3 Tenta poetry run
+  # --- 2.3 Instalação automática via pip ---
+  echo "⚙️ Instalando Prowler runtime (via pip)..."
+  if ! command -v pip >/dev/null 2>&1; then
+    echo "📦 Instalando pip..."
+    apt-get update -y && apt-get install -y python3-pip
+  fi
+
+  pip install --no-cache-dir --upgrade pip setuptools wheel
+  pip install --no-cache-dir prowler-cloud || {
+    echo "❌ Falha ao instalar prowler-cloud via pip."
+    return 1
+  }
+
+  # Após instalação, garantir PATH
+  export PATH="/home/prowler/.local/bin:/root/.local/bin:$PATH"
+
+  if command -v prowler >/dev/null 2>&1; then
+    PROWLER_CMD=( "$(command -v prowler)" )
+    echo "✅ Prowler instalado e detectado: ${PROWLER_CMD[0]}"
+    return 0
+  fi
+
+  # --- 2.4 Fallback Poetry ---
   if command -v poetry >/dev/null 2>&1; then
     if POETRY_ACTIVE_DIR="$(poetry -C "$PROJECT_DIR" env info --path 2>/dev/null || true)"; then
       if [[ -x "$POETRY_ACTIVE_DIR/bin/prowler" ]]; then
@@ -72,35 +94,40 @@ resolve_prowler_cmd() {
         return 0
       fi
     fi
-    # fallback via poetry run (sem path fixo)
     PROWLER_CMD=( poetry run prowler )
     echo "ℹ️ Usando 'poetry run prowler' (fallback)."
     return 0
   fi
 
-  # 2.4 Último fallback: python -m prowler
+  # --- 2.5 Último recurso ---
   if command -v python3 >/dev/null 2>&1; then
     PROWLER_CMD=( python3 -m prowler )
     echo "⚠️ Usando 'python3 -m prowler' (fallback)."
     return 0
   fi
 
+  echo "❌ Nenhum método conseguiu resolver o comando do Prowler."
   return 1
 }
 
+# ============================================================
+# 3) Resolução do binário Prowler
+# ============================================================
 if ! resolve_prowler_cmd; then
-  echo "❌ Não foi possível resolver o comando do Prowler."
+  echo "❌ Erro fatal: Não foi possível preparar o ambiente Prowler."
   exit 127
 fi
 
-# 3) Diagnóstico rápido
+# Diagnóstico
 echo "✅ Comando Prowler: ${PROWLER_CMD[*]}"
 ( "${PROWLER_CMD[@]}" --version || true ) 2>&1 | sed 's/^/   > /'
 echo "📂 PWD: $(pwd)"
 echo "👤 User: $(whoami)"
 echo "🔧 PATH: $PATH"
 
+# ============================================================
 # 4) Variáveis obrigatórias
+# ============================================================
 : "${CLOUD_PROVIDER:?❌ CLOUD_PROVIDER não definido (aws | azure | gcp)}"
 : "${TARGET_ACCOUNTS:?❌ TARGET_ACCOUNTS não definido (IDs separados por vírgula ou ALL)}"
 
@@ -112,7 +139,9 @@ OUTPUTS=()
 
 CLOUD_PROVIDER="$(echo "$CLOUD_PROVIDER" | tr '[:upper:]' '[:lower:]')"
 
+# ============================================================
 # 5) Upload S3
+# ============================================================
 upload_to_s3() {
   local file="$1"
   local account="$2"
@@ -124,7 +153,9 @@ upload_to_s3() {
   }
 }
 
+# ============================================================
 # 6) Execução genérica
+# ============================================================
 run_prowler_generic() {
   local provider="$1"
   local id="$2"
@@ -141,7 +172,6 @@ run_prowler_generic() {
     --output-directory "$OUTPUT_DIR" \
     --ignore-exit-code-3
 
-  # Upload e verificação
   if [[ -f "$out_file" ]]; then
     echo "✅ Arquivo gerado: $out_file"
     OUTPUTS+=( "$out_file" )
@@ -151,7 +181,9 @@ run_prowler_generic() {
   fi
 }
 
-# 7) Provedor: AWS
+# ============================================================
+# 7) Provedor AWS
+# ============================================================
 if [[ "$CLOUD_PROVIDER" == "aws" ]]; then
   echo "☁️  Selecionado AWS"
   if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
@@ -178,7 +210,9 @@ if [[ "$CLOUD_PROVIDER" == "aws" ]]; then
   done
 fi
 
-# 8) Provedor: Azure
+# ============================================================
+# 8) Provedor Azure
+# ============================================================
 if [[ "$CLOUD_PROVIDER" == "azure" ]]; then
   echo "☁️  Selecionado Azure"
   if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
@@ -194,7 +228,9 @@ if [[ "$CLOUD_PROVIDER" == "azure" ]]; then
   done
 fi
 
-# 9) Provedor: GCP
+# ============================================================
+# 9) Provedor GCP
+# ============================================================
 if [[ "$CLOUD_PROVIDER" == "gcp" ]]; then
   echo "☁️  Selecionado GCP"
   if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
@@ -218,7 +254,9 @@ if [[ "$CLOUD_PROVIDER" == "gcp" ]]; then
   done
 fi
 
+# ============================================================
 # 10) Resumo
+# ============================================================
 echo "🧾 === Execução finalizada. Relatórios gerados: ==="
 printf '%s\n' "${OUTPUTS[@]}"
 
