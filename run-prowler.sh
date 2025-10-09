@@ -6,8 +6,8 @@ set -Eeuo pipefail
 # ============================================================
 
 # Caminho padrão onde o Prowler e outros binários Python ficam
-PYENV_PATH="/root/.pyenv/versions/3.11.13/bin"
-PROWLER_BIN="${PYENV_PATH}/prowler"
+PYENV_PATH=$(find /root/.pyenv/versions -maxdepth 1 -type d | sort -r | head -n 1)
+PROWLER_BIN="${PYENV_PATH}/bin/prowler"
 
 # Diagnóstico inicial
 echo "=== Iniciando execução do Prowler Runner ==="
