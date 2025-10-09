@@ -1,21 +1,45 @@
 #!/bin/bash
 set -euo pipefail
 
-#!/bin/bash
-set -euo pipefail
+# ============================================================
+# 🔧 FIX DEFINITIVO: Garante que o binário do Prowler seja localizado
+# mesmo que o PATH do container não carregue automaticamente o virtualenv
+# ============================================================
 
-# 🚩 CORREÇÃO CRÍTICA: GARANTE O PATH COMPLETO PARA O SHELL DO ENTRYPOINT
-#export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin"
-export PATH="/home/prowler/.local/bin:$PATH"
-cd /home/prowler/prowler
-
-# === DIAGNÓSTICO INICIAL (Removendo a Lógica de Instalação e Path) ===
-# O restante do script agora confia que o 'prowler' está no PATH
-if ! command -v prowler &> /dev/null; then
-    echo "❌ Erro Crítico: 'prowler' não encontrado no PATH! O Dockerfile falhou na instalação."
+# Caminho base e PATH padrão
+export PATH="/home/prowler/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+cd /home/prowler/prowler || {
+    echo "❌ Diretório /home/prowler/prowler não encontrado."
     exit 1
+}
+
+# Detecta virtualenv do Poetry e adiciona ao PATH
+if [ -d "/home/prowler/.cache/pypoetry/virtualenvs" ]; then
+    VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -maxdepth 1 -type d -name "prowler*" | head -n 1 || true)
+    if [ -n "$VENV_PATH" ]; then
+        export PATH="$VENV_PATH/bin:$PATH"
+        echo "✅ Virtualenv detectado e adicionado ao PATH: $VENV_PATH"
+    else
+        echo "⚠️ Nenhum virtualenv encontrado em ~/.cache/pypoetry/virtualenvs"
+    fi
+else
+    echo "⚠️ Diretório ~/.cache/pypoetry/virtualenvs não encontrado"
 fi
-# ... (o restante do script run-prowler.sh continua aqui)
+
+# Diagnóstico
+echo "🔧 PATH atual: $PATH"
+if ! command -v prowler &>/dev/null; then
+    echo "⚠️ prowler ainda não acessível — tentando localizar manualmente..."
+    PWL_BIN=$(find /home/prowler/.cache/pypoetry/virtualenvs -type f -name prowler | head -n 1 || true)
+    if [ -n "$PWL_BIN" ]; then
+        echo "✅ Encontrado binário: $PWL_BIN"
+        alias prowler="$PWL_BIN"
+        export PATH="$(dirname "$PWL_BIN"):$PATH"
+    else
+        echo "❌ Erro crítico: 'prowler' não encontrado em nenhum caminho válido."
+        exit 127
+    fi
+fi
 
 echo "✅ Prowler pronto para uso: $(command -v prowler)"
 prowler --version || echo "⚠️ Não foi possível exibir a versão do prowler."
@@ -23,9 +47,10 @@ prowler --version || echo "⚠️ Não foi possível exibir a versão do prowler
 echo "🛰️ === Iniciando execução do Prowler Runner ==="
 echo "📂 Diretório atual: $(pwd)"
 echo "👤 Usuário atual: $(whoami)"
-echo "🔧 PATH atual: $PATH"
 
-# === VARIÁVEIS OBRIGATÓRIAS ===
+# ============================================================
+# 🌩️ VARIÁVEIS OBRIGATÓRIAS
+# ============================================================
 : "${CLOUD_PROVIDER:?❌ CLOUD_PROVIDER não definido (aws | azure | gcp)}"
 : "${TARGET_ACCOUNTS:?❌ TARGET_ACCOUNTS não definido (IDs separados por vírgula ou ALL)}"
 
@@ -37,7 +62,9 @@ OUTPUTS=()
 
 CLOUD_PROVIDER=$(echo "$CLOUD_PROVIDER" | tr '[:upper:]' '[:lower:]')
 
-# === Função de upload para S3 ===
+# ============================================================
+# 📤 Função: Upload para S3
+# ============================================================
 upload_to_s3() {
     local file="$1"
     local account="$2"
@@ -49,7 +76,9 @@ upload_to_s3() {
     }
 }
 
-# === Função genérica de execução ===
+# ============================================================
+# 🚀 Função: Execução Genérica do Prowler
+# ============================================================
 run_prowler_generic() {
     local provider="$1"
     local id="$2"
@@ -59,14 +88,23 @@ run_prowler_generic() {
     echo "🚀 Executando Prowler para ${provider^^} → $id"
     local OUT_FILE="${OUTPUT_DIR}/prowler-output-${id}-${TIMESTAMP}.json"
 
-    # Chamada direta e limpa para 'prowler' (Linha 59 na versão original)
-    pwd && echo $PATH && ls /home && ls /home/prowler/ && find / -name "*prowler*" -print && sleep 30 
+    # Diagnóstico do ambiente
+    echo "🧭 Verificação de ambiente..."
+    echo "PWD: $(pwd)"
+    echo "PATH: $PATH"
+    echo "Arquivos em /home/prowler:"
+    ls -la /home/prowler | head -n 10
+    echo "🔍 Procurando binário do Prowler..."
+    find /home/prowler/.cache/pypoetry -type f -name "prowler" | head -n 3
+
+    # Execução principal
     /home/prowler/.cache/pypoetry/virtualenvs/prowler*/bin/prowler "$provider" "${extra_args[@]}" \
         --output-formats json-asff \
         --output-filename "$(basename "$OUT_FILE" .json)" \
         --output-directory "$OUTPUT_DIR" \
         --ignore-exit-code-3
 
+    # Upload e verificação
     if [[ -f "$OUT_FILE" ]]; then
         echo "✅ Arquivo gerado: $OUT_FILE"
         OUTPUTS+=("$OUT_FILE")
@@ -76,7 +114,11 @@ run_prowler_generic() {
     fi
 }
 
-# === AWS ===
+# ============================================================
+# ☁️ Execução por Provedor
+# ============================================================
+
+# --- AWS ---
 if [[ "$CLOUD_PROVIDER" == "aws" ]]; then
     echo "☁️  Selecionado AWS"
     if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
@@ -102,7 +144,7 @@ if [[ "$CLOUD_PROVIDER" == "aws" ]]; then
     done
 fi
 
-# === AZURE ===
+# --- AZURE ---
 if [[ "$CLOUD_PROVIDER" == "azure" ]]; then
     echo "☁️  Selecionado Azure"
     if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
@@ -118,7 +160,7 @@ if [[ "$CLOUD_PROVIDER" == "azure" ]]; then
     done
 fi
 
-# === GCP ===
+# --- GCP ---
 if [[ "$CLOUD_PROVIDER" == "gcp" ]]; then
     echo "☁️  Selecionado GCP"
     if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
@@ -142,6 +184,8 @@ if [[ "$CLOUD_PROVIDER" == "gcp" ]]; then
     done
 fi
 
+# ============================================================
+# 🧾 Resumo final
+# ============================================================
 echo "🧾 === Execução finalizada. Relatórios gerados: ==="
 printf '%s\n' "${OUTPUTS[@]}"
-
