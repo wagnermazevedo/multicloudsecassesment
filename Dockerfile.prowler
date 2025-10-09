@@ -74,7 +74,11 @@ COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
 # === 10. PATH global e EntryPoint com fallback de debug ===
-ENV PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/home/prowler/.local/bin:/home/prowler/prowler"
+#ENV PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/home/prowler/.local/bin:/home/prowler/prowler"
+
+ENV PYTHONPATH="/home/prowler/prowler"
+ENV PATH="$PATH:/home/prowler/.cache/pypoetry/virtualenvs/prowler*/bin"
+
 
 ENTRYPOINT ["/bin/bash", "-c", "/usr/local/bin/run-prowler.sh || (echo '⚠️ Falha detectada — container ativo para debug...' && sleep infinity)"]
 
