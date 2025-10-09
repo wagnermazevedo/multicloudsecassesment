@@ -1,5 +1,5 @@
 # =======================================================
-# Dockerfile.prowler - Build Autossuficiente (versão estável)
+# Dockerfile.prowler - Build Autossuficiente (CodeBuild Ready)
 # =======================================================
 
 FROM public.ecr.aws/docker/library/python:3.12-slim-bookworm AS build
@@ -7,7 +7,9 @@ FROM public.ecr.aws/docker/library/python:3.12-slim-bookworm AS build
 LABEL maintainer="wagner.azevedo"
 LABEL description="Imagem multicloud-sec com Prowler incorporado"
 
+# === Variáveis de versão ===
 ARG POWERSHELL_VERSION=7.5.0
+ARG AWS_CLI_VERSION=2.15.55
 
 # === 1. Dependências básicas ===
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -15,7 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libicu72 libunwind8 libssl3 libcurl4 ca-certificates apt-transport-https gnupg dos2unix && \
     rm -rf /var/lib/apt/lists/*
 
-# === 2. Instala PowerShell (necessário para M365) ===
+# === 2. Instala AWS CLI v2 ===
+RUN curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" -o "awscliv2.zip" && \
+    unzip -q awscliv2.zip && ./aws/install && rm -rf awscliv2.zip ./aws
+
+# === 3. Instala PowerShell (necessário para checagens M365) ===
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
         wget --progress=dot:giga https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/powershell-${POWERSHELL_VERSION}-linux-x64.tar.gz -O /tmp/powershell.tar.gz ; \
@@ -30,53 +36,57 @@ RUN ARCH=$(uname -m) && \
     ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh && \
     rm /tmp/powershell.tar.gz
 
-# === 3. Usuário padrão ===
+# === 4. Cria o usuário padrão ===
 RUN addgroup --gid 1000 prowler && \
     adduser --uid 1000 --gid 1000 --disabled-password --gecos "" prowler
 
 USER prowler
 WORKDIR /home/prowler
 
-# === 4. Copia os diretórios e metadados do projeto ===
+# === 5. Copia os diretórios e metadados do projeto (pré-clonados no buildspec) ===
 COPY prowler/  /home/prowler/prowler/
 COPY dashboard/ /home/prowler/dashboard/
 COPY pyproject.toml README.md /home/prowler/
 COPY prowler/providers/m365/lib/powershell/m365_powershell.py /home/prowler/prowler/providers/m365/lib/powershell/m365_powershell.py
 
-# === 5. Instala dependências Python via Poetry ===
+# === 6. Instala dependências Python via Poetry (modo seguro) ===
 ENV HOME="/home/prowler"
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 ENV PATH="${HOME}/.local/bin:${PATH}"
 
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir poetry && \
-    cd /home/prowler/prowler && \
-    poetry config virtualenvs.create true && \
-    poetry config virtualenvs.in-project false && \
-    poetry install --no-root --compile && \
-    VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -type d -name "prowler*" | head -n 1 || true) && \
+RUN set -eux; \
+    pip install --no-cache-dir --upgrade pip; \
+    pip install --no-cache-dir poetry; \
+    cd /home/prowler/prowler; \
+    poetry config virtualenvs.create true; \
+    poetry config virtualenvs.in-project false; \
+    poetry install --no-root --compile || (echo '⚠️ Fallback: executando poetry install padrão' && poetry install); \
+    VENV_PATH="$(find /home/prowler/.cache/pypoetry/virtualenvs -maxdepth 1 -type d -name 'prowler*' | head -n 1 || true)"; \
     if [ -n "$VENV_PATH" ]; then \
         echo "Virtualenv localizado em: $VENV_PATH"; \
         echo "export PATH=\$PATH:$VENV_PATH/bin" >> /etc/profile.d/prowler.sh; \
         ln -sf "$VENV_PATH/bin/prowler" /usr/local/bin/prowler; \
     else \
-        echo "Aviso: Virtualenv do Poetry não localizado ainda."; \
-    fi && \
+        echo "⚠️ Aviso: Virtualenv não localizado, criando link manual..."; \
+        ln -sf /home/prowler/prowler/prowler.py /usr/local/bin/prowler; \
+    fi; \
     rm -rf ~/.cache/pip
 
-
-# === 6. Instala módulos PowerShell (para Azure/M365) ===
+# === 7. Instala módulos PowerShell (para Azure/M365) ===
 RUN poetry run python /home/prowler/prowler/providers/m365/lib/powershell/m365_powershell.py || true
 
-# === 7. Remove dependências antigas ===
+# === 8. Remove dependências antigas ===
 RUN pip uninstall -y dash-html-components dash-core-components || true
 
-# === 8. Copia o script principal ===
+# === 9. Copia o script principal ===
 USER root
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
-# === 9. PATH Global + Variáveis ===
+# === 10. PATH Global e variáveis persistentes ===
 ENV PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/home/prowler/.local/bin:/home/prowler/prowler:/home/prowler/.cache/pypoetry/virtualenvs/prowler*/bin"
 
-# === 10. ENTRYPOINT com fallback de debug ===
+# === 11. ENTRYPOINT com fallback para debug ===
 ENTRYPOINT ["/bin/bash", "-c", "run-prowler.sh || (echo '⚠️ Falha detectada — container ativo para debug...' && sleep infinity)"]
+
