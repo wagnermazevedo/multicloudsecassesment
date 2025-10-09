@@ -65,16 +65,18 @@ RUN set -eux; \
     rm -rf ~/.cache/pip
 
 # === 6.1 Detecta e expõe o binário do Prowler ===
-RUN set -eux; \
-    VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -maxdepth 1 -type d -name 'prowler*' | head -n 1 || true); \
-    echo "Virtualenv localizado em: ${VENV_PATH:-não encontrado}"; \
+SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
+
+RUN VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -maxdepth 1 -type d -name 'prowler*' | head -n 1 || true) && \
+    echo "Virtualenv localizado em: ${VENV_PATH:-nao_encontrado}" && \
     if [ -n "$VENV_PATH" ]; then \
         echo "export PATH=\$PATH:$VENV_PATH/bin" >> /etc/profile.d/prowler.sh; \
         ln -sf "$VENV_PATH/bin/prowler" /usr/local/bin/prowler; \
     else \
-        echo "⚠️ Aviso: Virtualenv não localizado, criando link manual..."; \
+        echo "Aviso: Virtualenv nao localizado, criando link manual..."; \
         ln -sf /home/prowler/prowler/prowler.py /usr/local/bin/prowler; \
     fi
+
 
 # === 7. Instala módulos PowerShell (para Azure/M365) ===
 RUN poetry run python /home/prowler/prowler/providers/m365/lib/powershell/m365_powershell.py || true
