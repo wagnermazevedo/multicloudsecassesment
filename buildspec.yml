@@ -1,35 +1,45 @@
----
 version: 0.2
 
 env:
   variables:
-    ECR_REPO: "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo"
-    AWS_REGION: "us-east-1"
+    REGION: "us-east-1"
+    ECR_ACCOUNT: "057959860487"
+    IMAGE_NAME: "multicloud-prowler-repo"
+    IMAGE_REPO: "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo"
+    # Se quiser manter o container vivo sempre que o build terminar:
+    START_DEBUG_CONTAINER: "true"
 
 phases:
   install:
     commands:
-      - echo "=== Fase INSTALL ==="
+      - echo "=== Checando ferramentas ==="
       - aws --version
       - docker --version
 
   pre_build:
     commands:
       - echo "=== Login no ECR ==="
-      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin "$ECR_REPO"
+      - aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin "${ECR_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
 
   build:
     commands:
-      - echo "=== Construindo imagem Docker ==="
-      - docker build -t prowler-repo -f Dockerfile .
-      - docker tag prowler-repo:latest "$ECR_REPO:latest"
+      - echo "=== Build da imagem ==="
+      - docker build -t "${IMAGE_NAME}:latest" -f Dockerfile .
+      - docker tag "${IMAGE_NAME}:latest" "${IMAGE_REPO}:latest"
 
   post_build:
     commands:
-      - echo "=== Publicando imagem no ECR ==="
-      - docker push "$ECR_REPO:latest"
-      - echo "=== Build concluído com sucesso ==="
-
-artifacts:
-  files:
-    - '**/*'
+      - echo "=== Push ==="
+      - docker push "${IMAGE_REPO}:latest"
+      - |
+        if [ "${START_DEBUG_CONTAINER}" = "true" ]; then
+          echo "=== Iniciando container em modo DEBUG (PROWLER_DEBUG=1) ==="
+          docker rm -f prowler-debug || true
+          docker run -d --name prowler-debug \
+            -e PROWLER_DEBUG=1 \
+            -e CLOUD_PROVIDER=aws \
+            -e TARGET_ACCOUNTS=ALL \
+            -e AWS_REGION=us-east-1 \
+            "${IMAGE_REPO}:latest"
+          echo "→ Agora, entre no host via SSM (Debug build) e rode: docker exec -it prowler-debug bash"
+        fi
