@@ -53,11 +53,16 @@ RUN pip install --no-cache-dir --upgrade pip && \
     poetry config virtualenvs.create true && \
     poetry config virtualenvs.in-project false && \
     poetry install --no-root --compile && \
-    VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -type d -name "prowler*" | head -n 1) && \
-    echo "✅ Virtualenv localizado em: $VENV_PATH" && \
-    echo "export PATH=\$PATH:$VENV_PATH/bin" >> /etc/profile.d/prowler.sh && \
-    ln -sf "$VENV_PATH/bin/prowler" /usr/local/bin/prowler && \
+    VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -type d -name "prowler*" | head -n 1 || true) && \
+    if [ -n "$VENV_PATH" ]; then \
+        echo "Virtualenv localizado em: $VENV_PATH"; \
+        echo "export PATH=\$PATH:$VENV_PATH/bin" >> /etc/profile.d/prowler.sh; \
+        ln -sf "$VENV_PATH/bin/prowler" /usr/local/bin/prowler; \
+    else \
+        echo "Aviso: Virtualenv do Poetry não localizado ainda."; \
+    fi && \
     rm -rf ~/.cache/pip
+
 
 # === 6. Instala módulos PowerShell (para Azure/M365) ===
 RUN poetry run python /home/prowler/prowler/providers/m365/lib/powershell/m365_powershell.py || true
