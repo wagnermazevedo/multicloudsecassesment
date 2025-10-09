@@ -71,15 +71,17 @@ RUN echo '#!/bin/bash' > /tmp/setup_prowler.sh && \
     echo 'VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -maxdepth 1 -type d -name "prowler*" | head -n 1 || true)' >> /tmp/setup_prowler.sh && \
     echo 'echo "Virtualenv detectado: ${VENV_PATH:-nao_encontrado}"' >> /tmp/setup_prowler.sh && \
     echo 'if [ -n "$VENV_PATH" ] && [ -x "$VENV_PATH/bin/prowler" ]; then' >> /tmp/setup_prowler.sh && \
-    echo '    echo "Linkando $VENV_PATH/bin/prowler para /usr/local/bin/prowler"'; >> /tmp/setup_prowler.sh && \
-    echo '    echo "export PATH=\\$PATH:$VENV_PATH/bin" >> /etc/profile.d/prowler.sh'; >> /tmp/setup_prowler.sh && \
-    echo '    ln -sf "$VENV_PATH/bin/prowler" /usr/local/bin/prowler'; >> /tmp/setup_prowler.sh && \
+    echo '  echo "Linkando $VENV_PATH/bin/prowler para /usr/local/bin/prowler"' >> /tmp/setup_prowler.sh && \
+    echo '  echo "export PATH=\$PATH:$VENV_PATH/bin" >> /etc/profile.d/prowler.sh' >> /tmp/setup_prowler.sh && \
+    echo '  ln -sf "$VENV_PATH/bin/prowler" /usr/local/bin/prowler' >> /tmp/setup_prowler.sh && \
     echo 'else' >> /tmp/setup_prowler.sh && \
-    echo '    echo "Aviso: Virtualenv nao localizado — criando fallback..."'; >> /tmp/setup_prowler.sh && \
-    echo '    ln -sf /home/prowler/prowler/prowler.py /usr/local/bin/prowler || true'; >> /tmp/setup_prowler.sh && \
+    echo '  echo "Aviso: Virtualenv nao localizado — criando fallback..."' >> /tmp/setup_prowler.sh && \
+    echo '  ln -sf /home/prowler/prowler/prowler.py /usr/local/bin/prowler || true' >> /tmp/setup_prowler.sh && \
     echo 'fi' >> /tmp/setup_prowler.sh && \
     chmod +x /tmp/setup_prowler.sh && \
-    /tmp/setup_prowler.sh && rm -f /tmp/setup_prowler.sh
+    /tmp/setup_prowler.sh && \
+    rm -f /tmp/setup_prowler.sh
+
 
 
 
