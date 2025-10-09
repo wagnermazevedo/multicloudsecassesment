@@ -1,24 +1,30 @@
 # =======================================================
 # Dockerfile - MultiCloud Prowler Runner (AWS + Azure + GCP + M365)
-# Base já com prowler:latest
+# Executa como root, com debug opcional
 # =======================================================
+
 FROM public.ecr.aws/prowler-cloud/prowler:latest
 
 LABEL maintainer="Wagner Azevedo"
-LABEL description="Prowler MultiCloud Runner com suporte AWS, Azure, GCP e M365 (com debug hold)"
+LABEL description="Prowler MultiCloud Runner com suporte AWS, Azure, GCP e M365 (root mode + debug hold)"
 
 USER root
 
-# Dependências úteis
+# === 1. Dependências básicas ===
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
         jq curl unzip bash wget ca-certificates gnupg lsb-release apt-transport-https dos2unix && \
     rm -rf /var/lib/apt/lists/*
 
-# Azure CLI
+# === 2. Instala AWS CLI ===
+RUN curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip -q awscliv2.zip && ./aws/install && \
+    rm -rf awscliv2.zip ./aws
+
+# === 3. Instala Azure CLI ===
 RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
-# PowerShell (para M365/Entra)
+# === 4. Instala PowerShell (para M365 e Entra ID) ===
 ARG POWERSHELL_VERSION=7.5.0
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
@@ -31,7 +37,7 @@ RUN ARCH=$(uname -m) && \
     ln -sf /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh && \
     rm /tmp/pwsh.tar.gz
 
-# Google Cloud SDK
+# === 5. Instala Google Cloud SDK ===
 RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
       | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
     curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg \
@@ -40,20 +46,20 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.
     apt-get install -y --no-install-recommends google-cloud-cli && \
     rm -rf /var/lib/apt/lists/*
 
-# Copia scripts
+# === 6. Copia scripts ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
-COPY entrypoint.sh   /usr/local/bin/entrypoint.sh
+COPY entrypoint.sh  /usr/local/bin/entrypoint.sh
+
 RUN dos2unix /usr/local/bin/run-prowler.sh /usr/local/bin/entrypoint.sh && \
     chmod +x /usr/local/bin/run-prowler.sh /usr/local/bin/entrypoint.sh
 
-USER prowler
-WORKDIR /home/prowler
+# === 7. Mantém execução como root ===
+WORKDIR /root
 
-# Deixa o PATH incluir possíveis bins do pyenv (imagem base já traz pyenv)
-ENV PATH="/root/.pyenv/versions/3.11.13/bin:/usr/local/bin:/usr/bin:/bin:/home/prowler/.local/bin"
+ENV PATH="/root/.pyenv/versions/3.11.13/bin:/usr/local/bin:/usr/bin:/bin"
 ENV PYTHONUNBUFFERED=1
 
-# Se PROWLER_DEBUG=1, o entrypoint manterá o container vivo mesmo que tudo dê certo
+# === 8. Modo debug opcional (mantém container vivo) ===
 ENV PROWLER_DEBUG=0
 
 ENTRYPOINT ["/bin/bash", "/usr/local/bin/entrypoint.sh"]
