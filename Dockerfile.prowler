@@ -1,5 +1,5 @@
 # =======================================================
-# Dockerfile.prowler - Build Autossuficiente (com Prowler integrado)
+# Dockerfile.prowler - Build Autossuficiente Corrigido
 # =======================================================
 
 FROM public.ecr.aws/docker/library/python:3.12-slim-bookworm
@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" -o "awscliv2.zip" && \
     unzip -q awscliv2.zip && ./aws/install && rm -rf awscliv2.zip ./aws
 
-# === 3. Instala PowerShell (necessário para M365 e Azure checks) ===
+# === 3. Instala PowerShell ===
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
         wget --progress=dot:giga https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/powershell-${POWERSHELL_VERSION}-linux-x64.tar.gz -O /tmp/powershell.tar.gz ; \
@@ -38,13 +38,13 @@ RUN ARCH=$(uname -m) && \
     ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh && \
     rm /tmp/powershell.tar.gz
 
-# === 4. Cria usuário padrão e diretórios ===
+# === 4. Cria usuário padrão ===
 RUN addgroup --gid 1000 prowler && \
     adduser --uid 1000 --gid 1000 --disabled-password --gecos "" prowler
 USER prowler
 WORKDIR /home/prowler
 
-# === 5. Copia os diretórios do projeto local ===
+# === 5. Copia o código do Prowler ===
 COPY prowler/  /home/prowler/prowler/
 COPY dashboard/ /home/prowler/dashboard/
 COPY pyproject.toml README.md /home/prowler/
@@ -52,7 +52,7 @@ COPY pyproject.toml README.md /home/prowler/
 ENV HOME='/home/prowler'
 ENV PATH="${HOME}/.local/bin:${PATH}"
 
-# === 6. Instala Poetry e dependências do Prowler ===
+# === 6. Instala Poetry e dependências ===
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir poetry && \
     cd /home/prowler/prowler && \
@@ -61,14 +61,17 @@ RUN pip install --no-cache-dir --upgrade pip && \
     poetry install --no-root --compile && \
     rm -rf ~/.cache/pip
 
-# === 7. Executa scripts PowerShell para módulos M365 ===
+# === 7. Executa script PowerShell para M365 (corrigido caminho) ===
 RUN cd /home/prowler/prowler && \
-    poetry run python prowler/providers/m365/lib/powershell/m365_powershell.py || true
+    poetry run python providers/m365/lib/powershell/m365_powershell.py || true
 
-# === 8. Remove dependências antigas (dash*) ===
+# === 8. Remove dependências antigas ===
 RUN pip uninstall -y dash-html-components dash-core-components || true
 
-# === 9. Localiza o virtualenv e expõe o binário do Prowler ===
+# === 9. Volta para root para criar links e scripts globais ===
+USER root
+
+# === 10. Localiza virtualenv e linka binário ===
 RUN echo '#!/bin/bash' > /tmp/setup_prowler.sh && \
     echo 'set -e' >> /tmp/setup_prowler.sh && \
     echo 'VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -maxdepth 1 -type d -name "prowler*" | head -n 1 || true)' >> /tmp/setup_prowler.sh && \
@@ -84,7 +87,7 @@ RUN echo '#!/bin/bash' > /tmp/setup_prowler.sh && \
     chmod +x /tmp/setup_prowler.sh && \
     /tmp/setup_prowler.sh && rm -f /tmp/setup_prowler.sh
 
-# === 10. Cria script de PATH dinâmico em runtime ===
+# === 11. Cria script de PATH dinâmico (executado como root) ===
 RUN echo '#!/bin/bash' > /etc/profile.d/prowler_path.sh && \
     echo 'if [ -d "/home/prowler/.cache/pypoetry/virtualenvs" ]; then' >> /etc/profile.d/prowler_path.sh && \
     echo '  VENV_DIR=$(find /home/prowler/.cache/pypoetry/virtualenvs -maxdepth 1 -type d -name "prowler*" | head -n 1)' >> /etc/profile.d/prowler_path.sh && \
@@ -94,10 +97,9 @@ RUN echo '#!/bin/bash' > /etc/profile.d/prowler_path.sh && \
     echo 'fi' >> /etc/profile.d/prowler_path.sh && \
     chmod +x /etc/profile.d/prowler_path.sh
 
-# === 11. Copia o script principal ===
-USER root
+# === 12. Copia o script principal ===
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh && chmod +x /usr/local/bin/run-prowler.sh
 
-# === 12. ENTRYPOINT com fallback de debug ===
+# === 13. ENTRYPOINT ===
 ENTRYPOINT ["/bin/bash", "-c", "source /etc/profile.d/prowler_path.sh && /usr/local/bin/run-prowler.sh || (echo 'Falha detectada — container ativo para debug...' && sleep infinity)"]
