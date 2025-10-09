@@ -1,24 +1,32 @@
 # =======================================================
-# Dockerfile - MultiCloud Prowler Runner (com AWS, Azure e GCP)
+# Dockerfile - MultiCloud Prowler Runner (AWS + Azure + GCP + M365)
+# Base: Imagem oficial do Prowler com Python e Pyenv pré-configurado
 # =======================================================
 
 FROM public.ecr.aws/prowler-cloud/prowler:latest
 
 LABEL maintainer="Wagner Azevedo"
-LABEL description="Prowler MultiCloud Runner com suporte AWS, Azure, GCP e M365"
+LABEL description="Imagem MultiCloud Runner com Prowler, Azure CLI, PowerShell e Google Cloud SDK"
 
 USER root
 
-# === 1. Dependências básicas ===
+# =======================================================
+# 1. Dependências básicas
+# =======================================================
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
-        jq curl unzip bash ca-certificates gnupg apt-transport-https lsb-release && \
+        jq curl unzip bash wget ca-certificates gnupg lsb-release apt-transport-https && \
     rm -rf /var/lib/apt/lists/*
 
-# === 2. Instala Azure CLI ===
-RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+# =======================================================
+# 2. Instala Azure CLI
+# =======================================================
+RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash && \
+    az version && echo "✅ Azure CLI instalado com sucesso."
 
-# === 3. Instala PowerShell (para M365 e Entra ID) ===
+# =======================================================
+# 3. Instala PowerShell (para Entra ID, M365, Defender, etc.)
+# =======================================================
 ARG POWERSHELL_VERSION=7.5.0
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
@@ -28,26 +36,41 @@ RUN ARCH=$(uname -m) && \
     fi && \
     mkdir -p /opt/microsoft/powershell/7 && \
     tar zxf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7 && \
+    chmod +x /opt/microsoft/powershell/7/pwsh && \
     ln -sf /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh && \
-    rm /tmp/pwsh.tar.gz
+    rm /tmp/pwsh.tar.gz && \
+    pwsh -Command '$PSVersionTable' && echo "✅ PowerShell instalado com sucesso."
 
-# === 4. Instala Google Cloud SDK ===
+# =======================================================
+# 4. Instala Google Cloud SDK
+# =======================================================
 RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
       | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
     curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg \
       | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
     apt-get update -y && \
     apt-get install -y --no-install-recommends google-cloud-cli && \
+    gcloud version && echo "✅ Google Cloud SDK instalado com sucesso." && \
     rm -rf /var/lib/apt/lists/*
 
-# === 5. Copia o script de execução ===
+# =======================================================
+# 5. Copia o script principal do Runner
+# =======================================================
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
-RUN chmod +x /usr/local/bin/run-prowler.sh
+RUN chmod +x /usr/local/bin/run-prowler.sh && \
+    chown -R prowler:prowler /usr/local/bin/run-prowler.sh
 
+# =======================================================
+# 6. Configura usuário, diretório e PATH
+# =======================================================
 USER prowler
 WORKDIR /home/prowler
 
-ENV PATH="/usr/local/bin:/usr/bin:/bin:/home/prowler/.local/bin"
+ENV PATH="/root/.pyenv/versions/3.11.13/bin:/usr/local/bin:/usr/bin:/bin:/home/prowler/.local/bin"
 ENV PYTHONUNBUFFERED=1
 
+# =======================================================
+# 7. EntryPoint padrão
+# =======================================================
 ENTRYPOINT ["/bin/bash", "/usr/local/bin/run-prowler.sh"]
+
