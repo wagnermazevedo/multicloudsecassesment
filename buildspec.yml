@@ -8,26 +8,18 @@ env:
 phases:
   install:
     commands:
-      - echo "=== Instalando e validando dependências no ambiente de build ==="
-      #- yum update -y
-      #- yum install -y unzip curl jq awscli docker.io
+      - echo "=== Validando dependências ==="
       - aws --version
       - docker --version
 
   pre_build:
     commands:
       - echo "=== Login no ECR ==="
-      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo"
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "057959860487.dkr.ecr.us-east-1.amazonaws.com"
 
   build:
     commands:
-      - echo "=== Construindo imagem Docker ==="
-      - git clone --depth 1 https://github.com/prowler-cloud/prowler.git prowler
-      - cp -r prowler/prowler ./prowler
-      - cp -r prowler/dashboard ./dashboard
-      - cp prowler/pyproject.toml .
-      - cp prowler/README.md .
-      - docker build -t prowler-repo -f Dockerfile.prowler .
+      - echo "=== Construindo imagem Docker sem git clone ==="
       - docker build -t prowler-repo -f Dockerfile.prowler .
       - docker tag prowler-repo:latest "$ECR_REPO:latest"
 
@@ -39,9 +31,3 @@ phases:
 
 artifacts:
   files: []
-
-
-
-
-
-
