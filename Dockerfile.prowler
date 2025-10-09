@@ -64,7 +64,12 @@ RUN cd /home/prowler/prowler && \
     poetry config virtualenvs.create true && \
     poetry config virtualenvs.in-project false && \
     poetry install --no-root --compile && \
-    find /home/prowler/.cache/pypoetry -type f -name prowler
+#    find /home/prowler/.cache/pypoetry -type f -name prowler
+
+RUN VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -type d -name "prowler*" | head -n 1) && \
+    echo "export PATH=\$PATH:$VENV_PATH/bin" >> /etc/profile.d/prowler.sh
+ENV PATH="$PATH:/home/prowler/.cache/pypoetry/virtualenvs/prowler*/bin"
+
 
 #ENTRYPOINT ["poetry", "run", "prowler"]
 ENTRYPOINT ["poetry", "run", "prowler", "/bin/bash", "-c", "/usr/local/bin/run-prowler.sh || (echo '⚠️ Falha detectada — container ativo para debug...' && sleep infinity)"]
