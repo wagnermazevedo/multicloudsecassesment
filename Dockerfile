@@ -2,7 +2,6 @@
 # Dockerfile - MultiCloud Prowler Runner (AWS + Azure + GCP + M365)
 # Executa como root, com debug opcional
 # =======================================================
-
 FROM public.ecr.aws/prowler-cloud/prowler:latest
 
 LABEL maintainer="Wagner Azevedo"
@@ -17,14 +16,15 @@ RUN apt-get update -y && \
     rm -rf /var/lib/apt/lists/*
 
 # === 2. Instala AWS CLI ===
-RUN curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+ARG AWS_CLI_VERSION=2.15.55
+RUN curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" -o "awscliv2.zip" && \
     unzip -q awscliv2.zip && ./aws/install && \
     rm -rf awscliv2.zip ./aws
 
 # === 3. Instala Azure CLI ===
 RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
-# === 4. Instala PowerShell (para M365 e Entra ID) ===
+# === 4. Instala PowerShell (para M365 / Entra ID) ===
 ARG POWERSHELL_VERSION=7.5.0
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
@@ -53,15 +53,15 @@ COPY entrypoint.sh  /usr/local/bin/entrypoint.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh /usr/local/bin/entrypoint.sh && \
     chmod +x /usr/local/bin/run-prowler.sh /usr/local/bin/entrypoint.sh
 
-# === 7. Mantém execução como root ===
+# === 7. Ambiente e PATH ===
 WORKDIR /root
-
 ENV PATH="/root/.pyenv/versions/3.11.13/bin:/usr/local/bin:/usr/bin:/bin"
 ENV PYTHONUNBUFFERED=1
-
-# === 8. Modo debug opcional (mantém container vivo) ===
 ENV PROWLER_DEBUG=0
 
-ENTRYPOINT ["/bin/bash", "/usr/local/bin/entrypoint.sh"]
+# === 8. Healthcheck opcional (garante CLIs no path) ===
+HEALTHCHECK --interval=1m --timeout=5s CMD aws --version && az version && gcloud version && pwsh --version || exit 1
 
+# === 9. EntryPoint ===
+ENTRYPOINT ["/bin/bash", "/usr/local/bin/entrypoint.sh"]
 
