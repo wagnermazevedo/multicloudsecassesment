@@ -2,184 +2,163 @@
 set -Eeuo pipefail
 
 # ============================================================
-# 🌩️ MultiCloud Prowler Runner - v4.0
-#   Autor: Wagner Azevedo
-#   Suporte: AWS | Azure | GCP
-#   Multi-cliente e multi-account com Parameter Store
+# 🛰️ Prowler Runner – multicloud e multiaccount (Pyenv-safe)
 # ============================================================
 
-export PATH="/usr/local/bin:/usr/bin:/bin:/home/prowler/.local/bin:$PATH"
+# Caminho padrão onde o Prowler e outros binários Python ficam
+PYENV_PATH="/root/.pyenv/versions/3.11.13/bin"
+PROWLER_BIN="${PYENV_PATH}/prowler"
+
+# Diagnóstico inicial
+echo "=== Iniciando execução do Prowler Runner ==="
+echo "📂 Diretório atual: $(pwd)"
+echo "👤 Usuário atual: $(whoami)"
+echo "🔧 Binário do Prowler: $PROWLER_BIN"
+
+# Validação
+if [[ ! -x "$PROWLER_BIN" ]]; then
+    echo "❌ Prowler não encontrado em ${PROWLER_BIN}"
+    echo "🔍 Tentando localizar fallback..."
+    PROWLER_BIN=$(find /root/.pyenv -type f -name prowler | head -n 1 || true)
+    if [[ -z "$PROWLER_BIN" ]]; then
+        echo "❌ Nenhum binário do Prowler encontrado. Abortando."
+        exit 127
+    fi
+    echo "✅ Fallback localizado: $PROWLER_BIN"
+fi
+
+# Mostrar versão
+"$PROWLER_BIN" --version || echo "⚠️ Não foi possível exibir a versão do Prowler."
+
+# ============================================================
+# 🌩️ Variáveis obrigatórias
+# ============================================================
+: "${CLOUD_PROVIDER:?❌ CLOUD_PROVIDER não definido (aws | azure | gcp)}"
+: "${TARGET_ACCOUNTS:?❌ TARGET_ACCOUNTS não definido (IDs separados por vírgula ou ALL)}"
+
+REGION="${AWS_REGION:-us-east-1}"
+BUCKET="my-prowler-results"
 TIMESTAMP="$(date +%Y%m%d%H%M)"
 OUTPUT_DIR="/tmp"
-BUCKET="my-prowler-results"
 OUTPUTS=()
 
-# === Cores ===
-RED="\033[0;31m"; GREEN="\033[0;32m"; BLUE="\033[0;34m"; YELLOW="\033[1;33m"; NC="\033[0m"
-
-echo -e "${BLUE}🛰️ === Iniciando execução do MultiCloud Prowler Runner ===${NC}"
-
-# === Variáveis obrigatórias ===
-: "${CLOUD_PROVIDER:?${RED}❌ CLOUD_PROVIDER não definido (aws | azure | gcp)${NC}}"
-: "${TARGET_ACCOUNTS:?${RED}❌ TARGET_ACCOUNTS não definido (IDs separados por vírgula ou ALL)${NC}}"
-
 CLOUD_PROVIDER="$(echo "$CLOUD_PROVIDER" | tr '[:upper:]' '[:lower:]')"
-REGION="${AWS_REGION:-us-east-1}"
-
-echo -e "${BLUE}🌩️  Provedor:${NC} $CLOUD_PROVIDER"
-echo -e "${BLUE}🎯  Contas/Projetos:${NC} $TARGET_ACCOUNTS"
-echo -e "${BLUE}📂  Saída:${NC} $OUTPUT_DIR"
-echo -e "${BLUE}🕒  Timestamp:${NC} $TIMESTAMP"
 
 # ============================================================
-# 🔐 Função: Carregar credenciais do Parameter Store
-# ============================================================
-load_creds_from_ssm() {
-  local client="$1"
-  local account_id="$2"
-  local base_path="/prowler/aws/credentials/${client}/${account_id}"
-
-  echo -e "${BLUE}🔑 Buscando credenciais para cliente:${NC} $client conta:${account_id}"
-
-  local access_key secret_key session_token
-  access_key="$(aws ssm get-parameter --name "${base_path}/AccessKeyId" --with-decryption --query 'Parameter.Value' --output text 2>/dev/null || true)"
-  secret_key="$(aws ssm get-parameter --name "${base_path}/SecretAccessKey" --with-decryption --query 'Parameter.Value' --output text 2>/dev/null || true)"
-  session_token="$(aws ssm get-parameter --name "${base_path}/SessionToken" --with-decryption --query 'Parameter.Value' --output text 2>/dev/null || true)"
-
-  if [[ -n "$access_key" && -n "$secret_key" ]]; then
-    export AWS_ACCESS_KEY_ID="$access_key"
-    export AWS_SECRET_ACCESS_KEY="$secret_key"
-    export AWS_SESSION_TOKEN="$session_token"
-    echo -e "${GREEN}✅ Credenciais carregadas com sucesso do SSM.${NC}"
-  else
-    echo -e "${RED}⚠️ Falha ao obter credenciais para $client/$account_id${NC}"
-  fi
-}
-
-# ============================================================
-# 📤 Upload para S3
+# 📤 Função de upload S3
 # ============================================================
 upload_to_s3() {
-  local file="$1"
-  local client="$2"
-  local account="$3"
-  local dest="s3://${BUCKET}/${client}/${CLOUD_PROVIDER}/${account}/${TIMESTAMP}/$(basename "$file")"
-  echo -e "${BLUE}📤 Enviando${NC} $file → $dest"
-  aws s3 cp "$file" "$dest" --acl bucket-owner-full-control || echo -e "${RED}⚠️ Falha no upload${NC}"
+    local file="$1"
+    local account="$2"
+    local dest="s3://${BUCKET}/${CLOUD_PROVIDER}/${account}/${TIMESTAMP}/$(basename "$file")"
+    echo "📤 Enviando $file → $dest"
+    aws s3 cp "$file" "$dest" --acl bucket-owner-full-control || {
+        echo "❌ Falha no upload de $file"
+        return 1
+    }
 }
 
 # ============================================================
-# 🚀 Execução genérica
+# 🚀 Função de execução genérica
 # ============================================================
 run_prowler_generic() {
-  local provider="$1"
-  local client="$2"
-  local id="$3"
-  shift 3
-  local extra_args=("$@")
+    local provider="$1"
+    local id="$2"
+    shift 2
+    local extra_args=( "$@" )
 
-  local OUT_FILE="${OUTPUT_DIR}/prowler-${client}-${id}-${TIMESTAMP}.json"
+    echo "🚀 Executando Prowler para ${provider^^} → $id"
+    local out_file="${OUTPUT_DIR}/prowler-output-${id}-${TIMESTAMP}.json"
 
-  echo -e "${BLUE}🚀 Executando Prowler para cliente:${NC} $client → conta/projeto ${id}"
+    "$PROWLER_BIN" "$provider" "${extra_args[@]}" \
+        --output-formats json-asff \
+        --output-filename "$(basename "$out_file" .json)" \
+        --output-directory "$OUTPUT_DIR" \
+        --ignore-exit-code-3
 
-  prowler "$provider" "${extra_args[@]}" \
-      --output-formats json-asff \
-      --output-filename "$(basename "$OUT_FILE" .json)" \
-      --output-directory "$OUTPUT_DIR" \
-      --ignore-exit-code-3 || true
-
-  if [[ -f "$OUT_FILE" ]]; then
-    echo -e "${GREEN}✅ Arquivo gerado:${NC} $OUT_FILE"
-    OUTPUTS+=("$OUT_FILE")
-    upload_to_s3 "$OUT_FILE" "$client" "$id"
-  else
-    echo -e "${RED}❌ Arquivo não encontrado para $id${NC}"
-  fi
+    if [[ -f "$out_file" ]]; then
+        echo "✅ Arquivo gerado: $out_file"
+        OUTPUTS+=( "$out_file" )
+        upload_to_s3 "$out_file" "$id"
+    else
+        echo "❌ Arquivo não encontrado para $id"
+    fi
 }
 
 # ============================================================
-# ☁️ AWS Execution
+# ☁️ Execução por provedor
 # ============================================================
+
+# --- AWS ---
 if [[ "$CLOUD_PROVIDER" == "aws" ]]; then
-  echo -e "${BLUE}☁️  Iniciando varredura AWS...${NC}"
+    echo "☁️  Selecionado AWS"
+    if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
+        echo "🔎 Buscando contas AWS no Parameter Store..."
+        TARGET_ACCOUNTS="$(aws ssm get-parameter \
+            --name "/prowler/aws/accounts" \
+            --query "Parameter.Value" \
+            --output text)"
+    fi
 
-  declare -A CLIENT_ACCOUNTS
+    for ACCOUNT_ID in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
+        echo "🎯 Conta alvo: $ACCOUNT_ID"
 
-  # Se ALL → busca lista completa de clientes e contas
-  if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
-    echo "🔎 Coletando lista de clientes no Parameter Store..."
-    CLIENTS="$(aws ssm get-parameter --name "/prowler/aws/clients" --query "Parameter.Value" --output text)"
+        CREDS="$(aws sts assume-role \
+            --role-arn "arn:aws:iam::${ACCOUNT_ID}:role/ProwlerAuditRole" \
+            --role-session-name "prowler-session")"
 
-    for CLIENT in $(echo "$CLIENTS" | tr ',' ' '); do
-      echo -e "${YELLOW}📁 Coletando contas do cliente:${NC} $CLIENT"
-      ACCOUNTS="$(aws ssm get-parameter --name "/prowler/aws/${CLIENT}/accounts" --query "Parameter.Value" --output text)"
-      CLIENT_ACCOUNTS["$CLIENT"]="$ACCOUNTS"
+        export AWS_ACCESS_KEY_ID="$(echo "$CREDS" | jq -r .Credentials.AccessKeyId)"
+        export AWS_SECRET_ACCESS_KEY="$(echo "$CREDS" | jq -r .Credentials.SecretAccessKey)"
+        export AWS_SESSION_TOKEN="$(echo "$CREDS" | jq -r .Credentials.SessionToken)"
+
+        run_prowler_generic aws "$ACCOUNT_ID" --region "$REGION"
+
+        unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
     done
-  else
-    # Caso seja lista manual → cliente genérico “default”
-    CLIENT_ACCOUNTS["default"]="$TARGET_ACCOUNTS"
-  fi
-
-  # === Loop principal ===
-  for CLIENT in "${!CLIENT_ACCOUNTS[@]}"; do
-    echo -e "${YELLOW}🏢 Iniciando execuções para cliente:${NC} $CLIENT"
-    for ACCOUNT_ID in $(echo "${CLIENT_ACCOUNTS[$CLIENT]}" | tr ',' ' '); do
-      echo "🎯 Conta alvo: $ACCOUNT_ID"
-      load_creds_from_ssm "$CLIENT" "$ACCOUNT_ID"
-      if [[ -z "${AWS_ACCESS_KEY_ID:-}" ]]; then
-        echo -e "${RED}⚠️ Sem credenciais válidas no SSM. Pulando conta $ACCOUNT_ID.${NC}"
-        continue
-      fi
-      run_prowler_generic aws "$CLIENT" "$ACCOUNT_ID" --region "$REGION"
-      unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
-    done
-  done
 fi
 
-# ============================================================
-# ☁️ Azure Execution
-# ============================================================
+# --- AZURE ---
 if [[ "$CLOUD_PROVIDER" == "azure" ]]; then
-  echo -e "${BLUE}☁️  Iniciando varredura Azure...${NC}"
+    echo "☁️  Selecionado Azure"
+    if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
+        echo "🔎 Buscando subscriptions Azure no Parameter Store..."
+        TARGET_ACCOUNTS="$(aws ssm get-parameter \
+            --name "/prowler/azure/subscriptions" \
+            --query "Parameter.Value" \
+            --output text)"
+    fi
 
-  if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
-    TARGET_ACCOUNTS="$(aws ssm get-parameter --name "/prowler/azure/subscriptions" --query "Parameter.Value" --output text)"
-  fi
-
-  az login --identity || echo -e "${RED}⚠️ Falha no login via Managed Identity${NC}"
-
-  for SUB in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
-    run_prowler_generic azure "azure" "$SUB" --subscription-id "$SUB"
-  done
+    for SUB in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
+        run_prowler_generic azure "$SUB" --subscription-id "$SUB"
+    done
 fi
 
-# ============================================================
-# ☁️ GCP Execution
-# ============================================================
+# --- GCP ---
 if [[ "$CLOUD_PROVIDER" == "gcp" ]]; then
-  echo -e "${BLUE}☁️  Iniciando varredura GCP...${NC}"
+    echo "☁️  Selecionado GCP"
+    if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
+        echo "🔎 Buscando projetos GCP no Parameter Store..."
+        TARGET_ACCOUNTS="$(aws ssm get-parameter \
+            --name "/prowler/gcp/projects" \
+            --query "Parameter.Value" \
+            --output text)"
+    fi
 
-  if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
-    TARGET_ACCOUNTS="$(aws ssm get-parameter --name "/prowler/gcp/projects" --query "Parameter.Value" --output text)"
-  fi
+    echo "🔑 Recuperando credenciais de service account..."
+    aws ssm get-parameter \
+        --name "/prowler/gcp/michel/serviceAccountKey" \
+        --with-decryption \
+        --query "Parameter.Value" \
+        --output text | base64 -d > /tmp/prowler-sa.json
+    export GOOGLE_APPLICATION_CREDENTIALS="/tmp/prowler-sa.json"
 
-  aws ssm get-parameter \
-    --name "/prowler/gcp/serviceAccountKey" \
-    --with-decryption \
-    --query "Parameter.Value" \
-    --output text | base64 -d > /tmp/prowler-sa.json
-
-  export GOOGLE_APPLICATION_CREDENTIALS="/tmp/prowler-sa.json"
-  gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
-
-  for PROJECT in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
-    run_prowler_generic gcp "gcp" "$PROJECT" --project-id "$PROJECT"
-  done
+    for PROJECT in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
+        run_prowler_generic gcp "$PROJECT" --project-id "$PROJECT"
+    done
 fi
 
 # ============================================================
-# 🧾 Resumo
+# 📜 Resumo
 # ============================================================
-echo -e "${BLUE}🧾 === Execução finalizada. Relatórios gerados: ===${NC}"
+echo "🧾 === Execução finalizada. Relatórios gerados: ==="
 printf '%s\n' "${OUTPUTS[@]}"
-
