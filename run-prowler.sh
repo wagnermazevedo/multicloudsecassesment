@@ -5,7 +5,9 @@ set -euo pipefail
 set -euo pipefail
 
 # 🚩 CORREÇÃO CRÍTICA: GARANTE O PATH COMPLETO PARA O SHELL DO ENTRYPOINT
-export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin"
+#export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin"
+export PATH="/home/prowler/.local/bin:$PATH"
+cd /home/prowler/prowler
 
 # === DIAGNÓSTICO INICIAL (Removendo a Lógica de Instalação e Path) ===
 # O restante do script agora confia que o 'prowler' está no PATH
@@ -59,7 +61,7 @@ run_prowler_generic() {
 
     # Chamada direta e limpa para 'prowler' (Linha 59 na versão original)
     pwd && echo $PATH && ls /home && ls /home/prowler/ && find / -name "*prowler*" -print && sleep 30 
-    python3 -m prowler "$provider" "${extra_args[@]}" \
+    poetry run python -m prowler "$provider" "${extra_args[@]}" \
         --output-formats json-asff \
         --output-filename "$(basename "$OUT_FILE" .json)" \
         --output-directory "$OUTPUT_DIR" \
