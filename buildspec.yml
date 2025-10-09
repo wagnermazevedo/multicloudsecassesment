@@ -1,34 +1,35 @@
+---
 version: 0.2
 
 env:
   variables:
     ECR_REPO: "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo"
-    IMAGE_TAG: "latest"
     AWS_REGION: "us-east-1"
 
 phases:
   install:
     commands:
-      - echo "=== 🧩 Validando ambiente CodeBuild ==="
+      - echo "=== Fase INSTALL ==="
       - aws --version
       - docker --version
 
   pre_build:
     commands:
-      - echo "=== 🔐 Login no ECR ==="
+      - echo "=== Login no ECR ==="
       - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin "$ECR_REPO"
 
   build:
     commands:
-      - echo "=== 🏗️ Construindo imagem Docker (MultiCloud Prowler Runner) ==="
-      - docker build -t prowler-runner .
-      - docker tag prowler-runner:latest "$ECR_REPO:$IMAGE_TAG"
+      - echo "=== Construindo imagem Docker ==="
+      - docker build -t prowler-repo -f Dockerfile .
+      - docker tag prowler-repo:latest "$ECR_REPO:latest"
 
   post_build:
     commands:
-      - echo "=== 🚀 Publicando imagem no ECR ==="
-      - docker push "$ECR_REPO:$IMAGE_TAG"
-      - echo "✅ Build concluído com sucesso: $ECR_REPO:$IMAGE_TAG"
+      - echo "=== Publicando imagem no ECR ==="
+      - docker push "$ECR_REPO:latest"
+      - echo "=== Build concluído com sucesso ==="
 
 artifacts:
-  files: []
+  files:
+    - '**/*'
