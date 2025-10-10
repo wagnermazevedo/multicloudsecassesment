@@ -1,114 +1,109 @@
 #!/bin/bash
 set -euo pipefail
+#### version 2.0
+echo "[RUNNER] Iniciando execução do Multicloud Assessment Runner"
 
-echo "[RUNNER] Iniciando execução do Prowler Runner"
+# ==============================
+# 1️⃣ VARIÁVEIS DE AMBIENTE
+# ==============================
+CLIENT_NAME="${CLIENT_NAME:-unknown_client}"
+CLOUD_PROVIDER="${CLOUD_PROVIDER:-aws}"
+ACCOUNT_ID="${ACCOUNT_ID:-none}"
+AWS_REGION="${AWS_REGION:-us-east-1}"
+S3_BUCKET="${S3_BUCKET:-multicloud-assessments}"
+TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
 
-# Localiza o binário do Prowler
-if command -v prowler >/dev/null 2>&1; then
-  PROWLER_BIN="$(command -v prowler)"
-else
-  PROWLER_BIN=$(find /home/prowler/.cache/pypoetry/virtualenvs -type f -name "prowler" | head -n 1 || true)
+OUTPUT_DIR="/tmp/output-${TIMESTAMP}"
+mkdir -p "$OUTPUT_DIR"
+
+echo "[RUNNER] Cliente: $CLIENT_NAME"
+echo "[RUNNER] Cloud: $CLOUD_PROVIDER"
+echo "[RUNNER] Accounts: $ACCOUNT_ID"
+echo "[RUNNER] Região AWS: $AWS_REGION"
+echo "[RUNNER] Bucket de destino: $S3_BUCKET"
+echo "[RUNNER] Diretório de saída: $OUTPUT_DIR"
+echo "--------------------------------------------------"
+
+# ==============================
+# 2️⃣ LOCALIZAÇÃO DO PROWLER
+# ==============================
+VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -type d -name "prowler-*-py3.*" | head -n 1 || true)
+if [ -n "$VENV_PATH" ]; then
+  export PATH="$VENV_PATH/bin:$PATH"
 fi
 
-if [ -z "$PROWLER_BIN" ]; then
-  echo "[RUNNER] ERRO: Não foi possível localizar o binário do Prowler!"
+PROWLER_PATH=$(command -v prowler || true)
+if [ -z "$PROWLER_PATH" ]; then
+  echo "[ERRO] O binário do Prowler não foi encontrado no PATH."
   exit 1
 else
-  echo "[RUNNER] Prowler encontrado em: $PROWLER_BIN"
+  echo "[RUNNER] Prowler detectado em: $PROWLER_PATH"
 fi
+echo "--------------------------------------------------"
 
-# Verifica variáveis obrigatórias
-: "${CLOUD_PROVIDER:?ERRO: CLOUD_PROVIDER não definido (aws | azure | gcp)}"
-: "${TARGET_ACCOUNTS:?ERRO: TARGET_ACCOUNTS não definido (IDs separados por vírgula ou ALL)}"
+# ==============================
+# 3️⃣ FUNÇÕES AUXILIARES
+# ==============================
+run_for_account() {
+  local account_id="$1"
+  local output_file="${OUTPUT_DIR}/${CLOUD_PROVIDER}_${account_id}_${TIMESTAMP}.json"
+  echo "[RUNNER] [$(date +%H:%M:%S)] Iniciando varredura para conta $account_id..."
 
-REGION="${AWS_REGION:-us-east-1}"
-BUCKET="${S3_BUCKET:-my-prowler-results}"
-TIMESTAMP="$(date +%Y%m%d%H%M)"
-OUTPUT_DIR="/tmp"
-OUTPUTS=()
+  case "$CLOUD_PROVIDER" in
+    aws)
+      prowler aws --account-id "$account_id" -M json-asff -o "$output_file" || echo "[WARN] Falha parcial na conta $account_id"
+      ;;
+    azure)
+      prowler azure -M json -o "$output_file" || echo "[WARN] Falha parcial na subscrição $account_id"
+      ;;
+    gcp)
+      prowler gcp -M json -o "$output_file" || echo "[WARN] Falha parcial no projeto $account_id"
+      ;;
+    *)
+      echo "[ERRO] Provedor de nuvem não suportado: $CLOUD_PROVIDER"
+      exit 1
+      ;;
+  esac
 
-CLOUD_PROVIDER="$(echo "$CLOUD_PROVIDER" | tr '[:upper:]' '[:lower:]')"
-
-# Upload S3
-upload_to_s3() {
-  local file="$1"
-  local account="$2"
-  local dest="s3://${BUCKET}/${CLOUD_PROVIDER}/${account}/${TIMESTAMP}/$(basename "$file")"
-  echo "[RUNNER] Upload para $dest"
-  aws s3 cp "$file" "$dest" --acl bucket-owner-full-control || {
-    echo "[RUNNER] Falha no upload de $file"
-    return 1
-  }
-}
-
-# Execução genérica
-run_prowler_generic() {
-  local provider="$1"
-  local id="$2"
-  shift 2
-  local extra_args=( "$@" )
-
-  echo "[RUNNER] Executando Prowler para ${provider^^} → $id"
-  local out_file="${OUTPUT_DIR}/prowler-output-${id}-${TIMESTAMP}.json"
-
-  "$PROWLER_BIN" "$provider" "${extra_args[@]}" \
-    --output-formats json-asff \
-    --output-filename "$(basename "$out_file" .json)" \
-    --output-directory "$OUTPUT_DIR" \
-    --ignore-exit-code-3
-
-  if [[ -f "$out_file" ]]; then
-    echo "[RUNNER] Arquivo gerado: $out_file"
-    OUTPUTS+=( "$out_file" )
-    upload_to_s3 "$out_file" "$id"
+  if [ -f "$output_file" ]; then
+    echo "[RUNNER] Resultado salvo em: $output_file"
   else
-    echo "[RUNNER] Arquivo não encontrado para $id"
+    echo "[ERRO] Nenhum resultado gerado para $account_id"
   fi
 }
 
-# AWS
-if [[ "$CLOUD_PROVIDER" == "aws" ]]; then
-  echo "[RUNNER] Selecionado AWS"
-  if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
-    TARGET_ACCOUNTS="$(aws ssm get-parameter --name "/prowler/aws/accounts" --query "Parameter.Value" --output text)"
-  fi
-  for ACCOUNT_ID in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
-    CREDS="$(aws sts assume-role --role-arn "arn:aws:iam::${ACCOUNT_ID}:role/ProwlerAuditRole" --role-session-name "prowler-session")"
-    export AWS_ACCESS_KEY_ID="$(echo "$CREDS" | jq -r .Credentials.AccessKeyId)"
-    export AWS_SECRET_ACCESS_KEY="$(echo "$CREDS" | jq -r .Credentials.SecretAccessKey)"
-    export AWS_SESSION_TOKEN="$(echo "$CREDS" | jq -r .Credentials.SessionToken)"
-    run_prowler_generic aws "$ACCOUNT_ID" --region "$REGION"
-    unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
-  done
-fi
+upload_to_s3() {
+  local account_id="$1"
+  local s3_prefix="${CLIENT_NAME}/${CLOUD_PROVIDER}/${account_id}/${TIMESTAMP}"
+  echo "[RUNNER] Enviando resultados para s3://${S3_BUCKET}/${s3_prefix}/"
+  aws s3 cp "$OUTPUT_DIR" "s3://${S3_BUCKET}/${s3_prefix}/" --recursive --region "$AWS_REGION"
+  echo "[RUNNER] Upload concluído para $account_id."
+  echo "--------------------------------------------------"
+}
 
-# Azure
-if [[ "$CLOUD_PROVIDER" == "azure" ]]; then
-  echo "[RUNNER] Selecionado Azure"
-  if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
-    TARGET_ACCOUNTS="$(aws ssm get-parameter --name "/prowler/azure/subscriptions" --query "Parameter.Value" --output text)"
-  fi
-  for SUB in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
-    run_prowler_generic azure "$SUB" --subscription-id "$SUB"
-  done
-fi
+# ==============================
+# 4️⃣ EXECUÇÃO DO SCAN (LOOP MULTI-CONTA)
+# ==============================
+IFS=',' read -ra ACCOUNTS <<< "$ACCOUNT_ID"
+TOTAL=${#ACCOUNTS[@]}
+INDEX=1
 
-# GCP
-if [[ "$CLOUD_PROVIDER" == "gcp" ]]; then
-  echo "[RUNNER] Selecionado GCP"
-  if [[ "$TARGET_ACCOUNTS" == "ALL" ]]; then
-    TARGET_ACCOUNTS="$(aws ssm get-parameter --name "/prowler/gcp/projects" --query "Parameter.Value" --output text)"
-  fi
-  aws ssm get-parameter \
-    --name "/prowler/gcp/michel/serviceAccountKey" \
-    --with-decryption \
-    --query "Parameter.Value" \
-    --output text | base64 -d > /tmp/prowler-sa.json
-  export GOOGLE_APPLICATION_CREDENTIALS="/tmp/prowler-sa.json"
-  for PROJECT in $(echo "$TARGET_ACCOUNTS" | tr ',' ' '); do
-    run_prowler_generic gcp "$PROJECT" --project-id "$PROJECT"
-  done
-fi
+echo "[RUNNER] Detectadas ${TOTAL} contas para análise."
+echo "--------------------------------------------------"
 
-echo "[RUNNER] Execução finalizada. Relatórios gerados:"
-printf '%s\n' "${OUTPUTS[@]}"
+for acc in "${ACCOUNTS[@]}"; do
+  acc_trimmed=$(echo "$acc" | xargs)
+  echo "[RUNNER] ▶️ [$INDEX/$TOTAL] Iniciando conta $acc_trimmed..."
+  run_for_account "$acc_trimmed"
+  upload_to_s3 "$acc_trimmed"
+
+  PERCENT=$((INDEX * 100 / TOTAL))
+  echo "[RUNNER] ✅ Progresso: ${PERCENT}% concluído"
+  ((INDEX++))
+done
+
+# ==============================
+# 5️⃣ FINALIZAÇÃO
+# ==============================
+echo "[RUNNER] ✅ Todos os scans concluídos com sucesso."
+echo "[RUNNER] Resultados enviados para o bucket S3: $S3_BUCKET"
