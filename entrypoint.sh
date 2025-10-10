@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# entrypoint.sh ---- version 1.2
 echo "[ENTRYPOINT] Iniciando container em $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 # ==============================
@@ -121,7 +122,7 @@ main() {
   diagnose_paths
 
   echo "[ENTRYPOINT] Executando run-prowler.sh..."
-  exec /usr/local/bin/run-prowler.sh
+  exec /usr/local/bin/run-multicloudassessment.sh
 }
 
 main "$@"
