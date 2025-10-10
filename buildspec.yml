@@ -1,75 +1,46 @@
 # =======================================================
-# Dockerfile - MultiCloud Prowler Runner (AWS + Azure + GCP + M365)
-# Base: Imagem oficial do Prowler com Python e Pyenv pré-configurado
+# buildspec.yml - Build e Push do MultiCloud Prowler Runner
 # =======================================================
 
-FROM public.ecr.aws/prowler-cloud/prowler:latest
+version: 0.2
 
-LABEL maintainer="Wagner Azevedo"
-LABEL description="Imagem MultiCloud Runner com Prowler, Azure CLI, PowerShell e Google Cloud SDK"
+env:
+  variables:
+    AWS_DEFAULT_REGION: "us-east-1"
+    ECR_REPO: "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo"
+  # Permite que o CodeBuild use o Docker no modo privilegiado
+  privileged: true
 
-USER root
+phases:
+  install:
+    commands:
+      - echo "=== [INSTALL] Iniciando dependências do ambiente ==="
+      - aws --version
+      - docker --version
 
-# =======================================================
-# 1. Dependências básicas
-# =======================================================
-RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends \
-        jq curl unzip bash wget ca-certificates gnupg lsb-release apt-transport-https && \
-    rm -rf /var/lib/apt/lists/*
+  pre_build:
+    commands:
+      - echo "=== [LOGIN] Autenticando no Amazon ECR ==="
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REPO
+      - echo "Login no ECR concluído com sucesso."
 
-# =======================================================
-# 2. Instala Azure CLI
-# =======================================================
-RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash && \
-    az version && echo "✅ Azure CLI instalado com sucesso."
+  build:
+    commands:
+      - echo "=== [BUILD] Construindo imagem Docker ==="
+      - docker build -t multicloud-prowler-repo:latest -f Dockerfile .
+      - echo "=== [TAG] Gerando tag ECR ==="
+      - docker tag multicloud-prowler-repo:latest $ECR_REPO:latest
 
-# =======================================================
-# 3. Instala PowerShell (para Entra ID, M365, Defender, etc.)
-# =======================================================
-ARG POWERSHELL_VERSION=7.5.0
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then \
-        wget -q https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/powershell-${POWERSHELL_VERSION}-linux-x64.tar.gz -O /tmp/pwsh.tar.gz ; \
-    else \
-        wget -q https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/powershell-${POWERSHELL_VERSION}-linux-arm64.tar.gz -O /tmp/pwsh.tar.gz ; \
-    fi && \
-    mkdir -p /opt/microsoft/powershell/7 && \
-    tar zxf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7 && \
-    chmod +x /opt/microsoft/powershell/7/pwsh && \
-    ln -sf /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh && \
-    rm /tmp/pwsh.tar.gz && \
-    pwsh -Command '$PSVersionTable' && echo "✅ PowerShell instalado com sucesso."
+  post_build:
+    commands:
+      - echo "=== [PUSH] Enviando imagem para o ECR ==="
+      - docker push $ECR_REPO:latest
+      - echo "=== [VERIFY] Confirmando publicação no ECR ==="
+      - aws ecr describe-images --repository-name multicloud-prowler-repo --region $AWS_DEFAULT_REGION --query 'imageDetails[].imageTags'
+      - echo "=== [COMPLETE] Build e Push finalizados com sucesso. ==="
 
-# =======================================================
-# 4. Instala Google Cloud SDK
-# =======================================================
-RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
-      | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
-    curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-      | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
-    apt-get update -y && \
-    apt-get install -y --no-install-recommends google-cloud-cli && \
-    gcloud version && echo "✅ Google Cloud SDK instalado com sucesso." && \
-    rm -rf /var/lib/apt/lists/*
+artifacts:
+  files:
+    - '**/*'
 
-# =======================================================
-# 5. Copia o script principal do Runner
-# =======================================================
-COPY run-prowler.sh /usr/local/bin/run-prowler.sh
-RUN chmod +x /usr/local/bin/run-prowler.sh && \
-    chown -R prowler:prowler /usr/local/bin/run-prowler.sh
 
-# =======================================================
-# 6. Configura usuário, diretório e PATH
-# =======================================================
-USER prowler
-WORKDIR /home/prowler
-
-ENV PATH="/root/.pyenv/versions/3.11.13/bin:/usr/local/bin:/usr/bin:/bin:/home/prowler/.local/bin"
-ENV PYTHONUNBUFFERED=1
-
-# =======================================================
-# 7. EntryPoint padrão
-# =======================================================
-ENTRYPOINT ["/bin/bash", "/usr/local/bin/entrypoint.sh"]
