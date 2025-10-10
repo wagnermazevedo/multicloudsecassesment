@@ -1,46 +1,38 @@
-# =======================================================
-# buildspec.yml - Build e Push do MultiCloud Prowler Runner
-# =======================================================
-
 version: 0.2
 
 env:
   variables:
     AWS_DEFAULT_REGION: "us-east-1"
     ECR_REPO: "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo"
-  # Permite que o CodeBuild use o Docker no modo privilegiado
   privileged: true
 
 phases:
   install:
     commands:
-      - echo "=== [INSTALL] Iniciando dependências do ambiente ==="
+      - echo "=== [INSTALL] Preparando ambiente de build ==="
       - aws --version
       - docker --version
 
   pre_build:
     commands:
-      - echo "=== [LOGIN] Autenticando no Amazon ECR ==="
+      - echo "=== [LOGIN] Autenticando no ECR ==="
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REPO
-      - echo "Login no ECR concluído com sucesso."
 
   build:
     commands:
-      - echo "=== [BUILD] Construindo imagem Docker ==="
+      - echo "=== [BUILD] Construindo imagem ==="
       - docker build -t multicloud-prowler-repo:latest -f Dockerfile .
-      - echo "=== [TAG] Gerando tag ECR ==="
       - docker tag multicloud-prowler-repo:latest $ECR_REPO:latest
 
   post_build:
     commands:
-      - echo "=== [PUSH] Enviando imagem para o ECR ==="
+      - echo "=== [PUSH] Enviando imagem ao ECR ==="
       - docker push $ECR_REPO:latest
-      - echo "=== [VERIFY] Confirmando publicação no ECR ==="
+      - echo "=== [VERIFY] Validando imagem ==="
       - aws ecr describe-images --repository-name multicloud-prowler-repo --region $AWS_DEFAULT_REGION --query 'imageDetails[].imageTags'
-      - echo "=== [COMPLETE] Build e Push finalizados com sucesso. ==="
+      - echo "Build completo e imagem enviada com sucesso."
 
 artifacts:
   files:
     - '**/*'
-
 
