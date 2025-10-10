@@ -1,57 +1,30 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
+#!/bin/bash
+set -euo pipefail
 
-echo "=== Inicializando EntryPoint do MultiCloud Prowler Runner ==="
-date
+echo "[ENTRYPOINT] Iniciando container..."
 
-# 1. Caminhos padrão
-RUNNER_SCRIPT="/usr/local/bin/run-prowler.sh"
-PROWLER_BIN="/root/.pyenv/versions/3.11.13/bin/prowler"
-
-# 2. PATH fixo para garantir acesso aos binários
-export PATH="/root/.pyenv/versions/3.11.13/bin:/usr/local/bin:/usr/bin:/bin"
-
-# 3. Verificações de pré-execução
-echo "=== Verificando binários essenciais ==="
-
-for bin in "$PROWLER_BIN" /usr/local/bin/aws /usr/bin/az /usr/bin/gcloud /usr/bin/pwsh; do
-  if [[ ! -x "$bin" ]]; then
-    echo "AVISO: Binário ausente ou não executável -> $bin"
+# === Detecta virtualenv do prowler dinamicamente ===
+if [ -d "/home/prowler/.cache/pypoetry/virtualenvs" ]; then
+  VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -type d -name "prowler-*-py3.*" | head -n 1)
+  if [ -n "$VENV_PATH" ]; then
+    echo "[ENTRYPOINT] Virtualenv detectado em: $VENV_PATH"
+    export PATH="$VENV_PATH/bin:$PATH"
   else
-    echo "OK: $(basename "$bin") disponível em $bin"
+    echo "[ENTRYPOINT] Nenhum virtualenv do prowler encontrado em /home/prowler/.cache/pypoetry/virtualenvs"
   fi
-done
-
-if [[ ! -x "$RUNNER_SCRIPT" ]]; then
-  echo "ERRO: Script principal não encontrado em $RUNNER_SCRIPT"
-  exit 127
+else
+  echo "[ENTRYPOINT] Diretório /home/prowler/.cache/pypoetry/virtualenvs não existe."
 fi
 
-# 4. Exibe variáveis principais
-echo "=== Variáveis de ambiente ==="
-echo "CLOUD_PROVIDER=${CLOUD_PROVIDER:-não definido}"
-echo "TARGET_ACCOUNTS=${TARGET_ACCOUNTS:-não definido}"
-echo "AWS_REGION=${AWS_REGION:-us-east-1}"
-echo "S3_BUCKET=${S3_BUCKET:-my-prowler-results}"
-echo "PROWLER_DEBUG=${PROWLER_DEBUG:-0}"
-echo "PATH=$PATH"
-echo
+# === Garante execução do PowerShell ===
+chmod +x /usr/bin/pwsh || true
 
-# 5. Validação mínima antes da execução
-if [[ -z "${CLOUD_PROVIDER:-}" || -z "${TARGET_ACCOUNTS:-}" ]]; then
-  echo "ERRO: As variáveis CLOUD_PROVIDER e TARGET_ACCOUNTS são obrigatórias."
-  echo "Exemplo: docker run -e CLOUD_PROVIDER=aws -e TARGET_ACCOUNTS=123456789012 multicloud-prowler"
-  exit 1
-fi
+# === Executa script principal ===
+echo "[ENTRYPOINT] Executando run-prowler.sh..."
+/usr/local/bin/run-prowler.sh "$@"
 
-# 6. Execução principal
-echo "=== Iniciando execução principal ==="
-/bin/bash "$RUNNER_SCRIPT"
-
-# 7. Mantém container ativo em modo debug
-if [[ "${PROWLER_DEBUG:-0}" == "1" ]]; then
-  echo "PROWLER_DEBUG=1 ativo. Mantendo container em execução para depuração."
+# === Mantém o container vivo em modo debug ===
+if [ "${PROWLER_DEBUG:-0}" = "1" ]; then
+  echo "[ENTRYPOINT] Modo DEBUG ativo - mantendo container vivo."
   tail -f /dev/null
 fi
-
-echo "=== Execução concluída ==="
