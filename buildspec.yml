@@ -3,7 +3,7 @@ version: 0.2
 env:
   variables:
     AWS_DEFAULT_REGION: "us-east-1"
-    ECR_REPO: "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo:latest"
+    ECR_REPO: "057959860487.dkr.ecr.us-east-1.amazonaws.com/multicloud-prowler-repo"
   privileged: true
 
 phases:
