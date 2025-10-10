@@ -49,7 +49,7 @@ RUN VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -type d -name "pr
 
 # 6. Copia scripts
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
-COPY run-prowler.sh /usr/local/bin/run-multicloudassessment.sh
+COPY run-multicloudassessment.sh /usr/local/bin/run-multicloudassessment.sh
 
 COPY entrypoint.sh   /usr/local/bin/entrypoint.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh /usr/local/bin/entrypoint.sh  /usr/local/bin/run-multicloudassessment.sh && \
