@@ -49,6 +49,16 @@ RUN dos2unix /usr/local/bin/run-prowler.sh /usr/local/bin/entrypoint.sh && \
     chmod +x /usr/local/bin/run-prowler.sh /usr/local/bin/entrypoint.sh && \
     chmod +x /usr/bin/pwsh
 
+# === Detecta automaticamente e fixa o virtualenv no PATH durante build ===
+RUN VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -type d -name "prowler-*-py3.*" | head -n 1 || true) && \
+    if [ -n "$VENV_PATH" ]; then \
+        echo "export PATH=\"$VENV_PATH/bin:\$PATH\"" >> /etc/profile.d/prowler.sh && \
+        echo "[Dockerfile] Virtualenv detectado e adicionado ao PATH: $VENV_PATH"; \
+    else \
+        echo "[Dockerfile] Nenhum virtualenv do prowler encontrado durante build."; \
+    fi
+
+# === Variáveis de ambiente ===
 ENV PYTHONUNBUFFERED=1
 ENV PROWLER_DEBUG=0
 
@@ -56,4 +66,3 @@ USER root
 WORKDIR /prowler
 
 ENTRYPOINT ["/bin/bash", "/usr/local/bin/entrypoint.sh"]
-
