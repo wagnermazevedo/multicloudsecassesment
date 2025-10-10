@@ -18,7 +18,7 @@ RUN apt-get update -y && \
 # === Azure CLI ===
 RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
-# === PowerShell ===
+# === PowerShell (para M365 e Entra) ===
 ARG POWERSHELL_VERSION=7.5.0
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
