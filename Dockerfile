@@ -2,7 +2,8 @@
 # Dockerfile - MultiCloud Prowler Runner (AWS + Azure + GCP + M365)
 # =======================================================
 
-FROM public.ecr.aws/prowler-cloud/prowler:latest
+#FROM public.ecr.aws/prowler-cloud/prowler:latest
+FROM public.ecr.aws/docker/library/python:3.12-slim-bookworm
 
 LABEL maintainer="Wagner Azevedo"
 LABEL description="Prowler MultiCloud Runner com suporte AWS, Azure, GCP e M365 (auto-detect Poetry venv)"
