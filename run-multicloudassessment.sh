@@ -1,169 +1,147 @@
 #!/bin/bash
 set -euo pipefail
 
-###### Version 3.6 - Production-Ready with Detailed Logging
-SESSION_ID=$(uuidgen)
+###### Version 3.7 - Autoformat & Resilient Multicloud Runner ######
+SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date +%s)
-LOG_PREFIX="[RUNNER:$SESSION_ID]"
+LOG_PREFIX="[RUNNER:${SESSION_ID}]"
 
+# ========== CORES ==========
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# ========== LOGGING ==========
 log() {
   local level="$1"; shift
   local msg="$*"
   local timestamp
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  echo "${LOG_PREFIX} ${timestamp} [${level}] ${msg}"
+
+  case "$level" in
+    INFO) echo -e "${LOG_PREFIX} ${timestamp} ${BLUE}[INFO]${NC} ${msg}" ;;
+    WARN) echo -e "${LOG_PREFIX} ${timestamp} ${YELLOW}[WARN]${NC} ${msg}" ;;
+    ERROR) echo -e "${LOG_PREFIX} ${timestamp} ${RED}[ERROR]${NC} ${msg}" ;;
+    SUCCESS) echo -e "${LOG_PREFIX} ${timestamp} ${GREEN}[OK]${NC} ${msg}" ;;
+    *) echo "${LOG_PREFIX} ${timestamp} [${level}] ${msg}" ;;
+  esac
 }
 
-log INFO "🧭 Iniciando execução do Multicloud Assessment Runner v3.6"
+log INFO "🧭 Iniciando execução do Multicloud Assessment Runner v3.7"
 
-# ==============================
-# VARIÁVEIS BÁSICAS
-# ==============================
+# ========== VARIÁVEIS ==========
 TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
 OUTPUT_DIR="/tmp/output-${TIMESTAMP}"
 mkdir -p "$OUTPUT_DIR"
 log INFO "📁 Diretório de saída: ${OUTPUT_DIR}"
 
-# ==============================
-# FUNÇÕES AUXILIARES
-# ==============================
+# ========== FUNÇÕES ==========
 get_param() {
-  local param_name="$1"
-  aws ssm get-parameter --name "$param_name" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo ""
+  aws ssm get-parameter --name "$1" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo ""
 }
 
 fetch_credentials() {
   local path="/clients/${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/credentials/access"
-  log INFO "🔍 Buscando credenciais em ${path}"
+  log INFO "🔹 Buscando credenciais em ${path}"
   get_param "$path"
 }
 
-# ==============================
-# AUTENTICAÇÃO MULTICLOUD
-# ==============================
+# --- Função inteligente de autenticação ---
 authenticate() {
-  local creds start_auth end_auth duration
-  start_auth=$(date +%s)
-  creds=$(fetch_credentials)
+  local creds_json temp_file="/tmp/${CLOUD_PROVIDER}_creds.json"
+  local start_auth=$(date +%s)
 
-  if [ -z "$creds" ]; then
-    log WARN "⚠️ Nenhum parâmetro encontrado no SSM. Solicitando credenciais manualmente..."
+  creds_json=$(fetch_credentials)
+
+  if [ -z "$creds_json" ]; then
+    log ERROR "❌ Nenhum parâmetro encontrado no SSM (${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID})"
+    return 1
+  fi
+
+  # Detectar e normalizar o formato
+  if echo "$creds_json" | jq empty 2>/dev/null; then
+    echo "$creds_json" > "$temp_file"
+  elif echo "$creds_json" | base64 --decode 2>/dev/null | jq empty 2>/dev/null; then
+    echo "$creds_json" | base64 --decode > "$temp_file"
+  elif echo "$creds_json" | jq -r . | jq empty 2>/dev/null; then
+    echo "$creds_json" | jq -r . > "$temp_file"
+  else
+    log ERROR "❌ Credenciais ${CLOUD_PROVIDER} inválidas (JSON corrompido no SSM)."
+    return 1
   fi
 
   case "$CLOUD_PROVIDER" in
     aws)
-      if [ -z "$creds" ]; then
-        read -rp "AWS_ACCESS_KEY_ID: " AWS_ACCESS_KEY_ID
-        read -rp "AWS_SECRET_ACCESS_KEY: " AWS_SECRET_ACCESS_KEY
-        read -rp "AWS_SESSION_TOKEN (opcional): " AWS_SESSION_TOKEN || true
-      else
-        # Verifica se é base64 válido
-        if echo "$creds" | base64 --decode &>/dev/null; then
-          echo "$creds" | base64 --decode > /tmp/aws_creds.json
-        else
-          echo "$creds" > /tmp/aws_creds.json
-        fi
-        # Valida JSON
-        if ! jq empty /tmp/aws_creds.json 2>/dev/null; then
-          log ERROR "❌ Credenciais AWS inválidas (JSON corrompido no SSM)."
-          exit 1
-        fi
-        export AWS_ACCESS_KEY_ID=$(jq -r '.AWS_ACCESS_KEY_ID' /tmp/aws_creds.json)
-        export AWS_SECRET_ACCESS_KEY=$(jq -r '.AWS_SECRET_ACCESS_KEY' /tmp/aws_creds.json)
-        export AWS_SESSION_TOKEN=$(jq -r '.AWS_SESSION_TOKEN // empty' /tmp/aws_creds.json)
-      fi
+      export AWS_ACCESS_KEY_ID=$(jq -r '.AWS_ACCESS_KEY_ID' "$temp_file")
+      export AWS_SECRET_ACCESS_KEY=$(jq -r '.AWS_SECRET_ACCESS_KEY' "$temp_file")
+      export AWS_SESSION_TOKEN=$(jq -r '.AWS_SESSION_TOKEN // empty' "$temp_file")
       aws sts get-caller-identity >/dev/null 2>&1 \
-        && log INFO "✅ Autenticação AWS bem-sucedida" \
+        && log SUCCESS "✅ Autenticação AWS bem-sucedida" \
         || log ERROR "❌ Falha na autenticação AWS"
       ;;
-
     azure)
-      if [ -z "$creds" ]; then
-        read -rp "AZURE_TENANT_ID: " AZURE_TENANT_ID
-        read -rp "AZURE_CLIENT_ID: " AZURE_CLIENT_ID
-        read -rp "AZURE_CLIENT_SECRET: " AZURE_CLIENT_SECRET
-      else
-        if echo "$creds" | base64 --decode &>/dev/null; then
-          echo "$creds" | base64 --decode > /etc/prowler/credentials/azure.env
-        else
-          echo "$creds" > /etc/prowler/credentials/azure.env
-        fi
-        source /etc/prowler/credentials/azure.env
-      fi
-      az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" >/dev/null 2>&1 \
-        && log INFO "✅ Autenticação Azure bem-sucedida" \
+      export AZURE_TENANT_ID=$(jq -r '.AZURE_TENANT_ID' "$temp_file")
+      export AZURE_CLIENT_ID=$(jq -r '.AZURE_CLIENT_ID' "$temp_file")
+      export AZURE_CLIENT_SECRET=$(jq -r '.AZURE_CLIENT_SECRET' "$temp_file")
+      az login --service-principal \
+        -u "$AZURE_CLIENT_ID" \
+        -p "$AZURE_CLIENT_SECRET" \
+        --tenant "$AZURE_TENANT_ID" >/dev/null 2>&1 \
+        && log SUCCESS "✅ Autenticação Azure bem-sucedida" \
         || log ERROR "❌ Falha na autenticação Azure"
       ;;
-
     gcp)
       mkdir -p /root/.config/gcloud
-      if [ -z "$creds" ]; then
-        read -rp "Caminho do arquivo JSON da Service Account: " SA_PATH
-        cp "$SA_PATH" /root/.config/gcloud/application_default_credentials.json
-      else
-        if echo "$creds" | base64 --decode &>/dev/null; then
-          echo "$creds" | base64 --decode > /root/.config/gcloud/application_default_credentials.json
-        else
-          echo "$creds" > /root/.config/gcloud/application_default_credentials.json
-        fi
-      fi
-      gcloud auth activate-service-account --key-file=/root/.config/gcloud/application_default_credentials.json >/dev/null 2>&1 \
-        && log INFO "✅ Autenticação GCP bem-sucedida" \
+      echo "$creds_json" > /root/.config/gcloud/application_default_credentials.json
+      gcloud auth activate-service-account \
+        --key-file=/root/.config/gcloud/application_default_credentials.json >/dev/null 2>&1 \
+        && log SUCCESS "✅ Autenticação GCP bem-sucedida" \
         || log ERROR "❌ Falha na autenticação GCP"
       ;;
-
     *)
       log ERROR "❌ Provedor de nuvem desconhecido: ${CLOUD_PROVIDER}"
       exit 1
       ;;
   esac
 
-  end_auth=$(date +%s)
-  duration=$((end_auth - start_auth))
-  log INFO "⏱️ Duração da autenticação (${CLOUD_PROVIDER}): ${duration}s"
+  local end_auth=$(date +%s)
+  log INFO "⏱️ Duração da autenticação: $((end_auth - start_auth))s"
 }
 
-# ==============================
-# EXECUÇÃO DO SCAN
-# ==============================
+# --- Execução do Scan ---
 run_scan() {
   local output_file="${OUTPUT_DIR}/${CLOUD_PROVIDER}_${ACCOUNT_ID}_${TIMESTAMP}.json"
-  log INFO "▶️ Executando Prowler (${CLOUD_PROVIDER}) para ${ACCOUNT_ID}"
   local start_scan=$(date +%s)
+  log INFO "▶️ Executando Prowler (${CLOUD_PROVIDER}) para ${ACCOUNT_ID}"
 
   case "$CLOUD_PROVIDER" in
     aws)
-      log INFO "🟢 Iniciando varredura AWS com provider unificado..."
       prowler aws \
-        --provider aws \
         -M json-asff \
         --output-filename "$(basename "$output_file")" \
         --output-directory "$OUTPUT_DIR" \
-        --compliance aws_foundational_security_best_practices_aws \
-        && log INFO "✅ Scan AWS concluído" \
-        || log WARN "⚠️ Falha parcial no scan AWS ($ACCOUNT_ID)"
+        && log SUCCESS "✅ Scan AWS concluído" \
+        || log WARN "⚠️ Falha parcial no scan AWS"
       ;;
     azure)
-      log INFO "🟣 Iniciando varredura Azure..."
       prowler azure \
         --subscription-ids "$ACCOUNT_ID" \
         -M json \
         --output-filename "$(basename "$output_file")" \
         --output-directory "$OUTPUT_DIR" \
-        --compliance cis_2.0_azure \
-        && log INFO "✅ Scan Azure concluído" \
-        || log WARN "⚠️ Falha parcial no scan Azure ($ACCOUNT_ID)"
+        && log SUCCESS "✅ Scan Azure concluído" \
+        || log WARN "⚠️ Falha parcial no scan Azure"
       ;;
     gcp)
-      log INFO "🔵 Iniciando varredura GCP..."
       prowler gcp \
         --project-ids "$ACCOUNT_ID" \
         -M json \
         --output-filename "$(basename "$output_file")" \
         --output-directory "$OUTPUT_DIR" \
-        --compliance cis_2.0_gcp \
-        && log INFO "✅ Scan GCP concluído" \
-        || log WARN "⚠️ Falha parcial no scan GCP ($ACCOUNT_ID)"
+        && log SUCCESS "✅ Scan GCP concluído" \
+        || log WARN "⚠️ Falha parcial no scan GCP"
       ;;
     *)
       log ERROR "❌ Provedor não suportado: $CLOUD_PROVIDER"
@@ -172,40 +150,36 @@ run_scan() {
   esac
 
   if [ -f "$output_file" ]; then
-    log INFO "📄 Relatório gerado: $output_file"
+    log SUCCESS "📄 Relatório gerado: $output_file"
   else
-    log ERROR "⚠️ Nenhum relatório foi gerado para ${CLOUD_PROVIDER}_${ACCOUNT_ID}"
+    log ERROR "⚠️ Nenhum relatório gerado para ${CLOUD_PROVIDER}_${ACCOUNT_ID}"
   fi
 
   local end_scan=$(date +%s)
   log INFO "⏱️ Duração do scan: $((end_scan - start_scan))s"
 }
 
-# ==============================
-# UPLOAD PARA S3
-# ==============================
+# --- Upload para S3 ---
 upload_to_s3() {
   local s3_prefix="${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/${TIMESTAMP}"
   local start_upload=$(date +%s)
-  log INFO "📤 Iniciando upload para s3://${S3_BUCKET}/${s3_prefix}/"
+  log INFO "📤 Enviando resultados para s3://${S3_BUCKET}/${s3_prefix}/"
 
-  aws s3 cp "$OUTPUT_DIR" "s3://${S3_BUCKET}/${s3_prefix}/" --recursive --region "$AWS_REGION" \
-    && log INFO "✅ Upload concluído para ${CLOUD_PROVIDER}/${ACCOUNT_ID}" \
-    || log ERROR "❌ Falha no upload para S3 (${CLOUD_PROVIDER}/${ACCOUNT_ID})"
+  aws s3 cp "$OUTPUT_DIR" "s3://${S3_BUCKET}/${s3_prefix}/" \
+    --recursive --region "$AWS_REGION" \
+    && log SUCCESS "✅ Upload concluído" \
+    || log ERROR "❌ Falha no upload para S3"
 
   local end_upload=$(date +%s)
   log INFO "⏱️ Duração do upload: $((end_upload - start_upload))s"
 }
 
-# ==============================
-# EXECUÇÃO PRINCIPAL
-# ==============================
+# ========== EXECUÇÃO ==========
 authenticate
 run_scan
 upload_to_s3
 
 END_TIME=$(date +%s)
 TOTAL_DURATION=$((END_TIME - START_TIME))
-log INFO "🏁 Execução finalizada com sucesso em ${TOTAL_DURATION}s"
+log SUCCESS "🏁 Execução finalizada com sucesso em ${TOTAL_DURATION}s"
 log INFO "📊 Resultados disponíveis em: s3://${S3_BUCKET}/${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/${TIMESTAMP}/"
-
