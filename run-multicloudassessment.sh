@@ -1,233 +1,309 @@
-#!/bin/bash
-set -euo pipefail
+###### Lambda Version 3.0 (Universal Multicloud Support: AWS, Azure, GCP)
+import json
+import boto3
+import os
+import re
+import datetime
+import traceback
+import uuid
 
-###### Version 3.9.3 - Unified Region Validation + Safe Credential Handling (AWS/Azure/GCP)
-SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
-START_TIME=$(date +%s)
-LOG_PREFIX="[RUNNER:${SESSION_ID}]"
+# ===== AWS Clients =====
+ecs_client = boto3.client("ecs")
+ssm_client = boto3.client("ssm")
+dynamo_client = boto3.client("dynamodb")
 
-# =============== Logging Function ===============
-log() {
-  local level="$1"; shift
-  local msg="$*"
-  local timestamp
-  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  local color_reset="\033[0m"
-  local color_info="\033[0;34m"
-  local color_warn="\033[0;33m"
-  local color_error="\033[0;31m"
+# ===== Environment Variables =====
+CLUSTER_ARN = os.getenv("ECS_CLUSTER_ARN")
+SUBNET_ID = os.getenv("SUBNET_ID")
+SECURITY_GROUP_ID = os.getenv("SECURITY_GROUP_ID")
+LAUNCH_TYPE = os.getenv("LAUNCH_TYPE", "FARGATE")
 
-  case "$level" in
-    INFO) echo -e "${LOG_PREFIX} ${timestamp} ${color_info}[INFO]${color_reset} ${msg}" ;;
-    WARN) echo -e "${LOG_PREFIX} ${timestamp} ${color_warn}[WARN]${color_reset} ${msg}" ;;
-    ERROR) echo -e "${LOG_PREFIX} ${timestamp} ${color_error}[ERROR]${color_reset} ${msg}" ;;
-    *) echo -e "${LOG_PREFIX} ${timestamp} [${level}] ${msg}" ;;
-  esac
-}
+SESSION_TABLE = os.getenv("SESSION_TABLE", "MulticloudChatbotSession")
+HISTORY_TABLE = os.getenv("HISTORY_TABLE", "MulticloudChatbotHistory")
 
-log INFO "🧭 Iniciando execução do Multicloud Assessment Runner v3.9.3"
+# ===== Logging Helper =====
+def log(msg):
+    print(f"[{datetime.datetime.utcnow().isoformat()}Z] {msg}")
 
-# =============== Variáveis Básicas ===============
-TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
-OUTPUT_DIR="/tmp/output-${TIMESTAMP}"
-mkdir -p "$OUTPUT_DIR"
-CREDS_SUMMARY=""
+# ===== Helpers =====
+def normalize(s):
+    return s.strip().lower() if isinstance(s, str) else s
 
-log INFO "📁 Diretório de saída: ${OUTPUT_DIR}"
-log INFO "🔹 Cliente: ${CLIENT_NAME:-undefined} | Nuvem: ${CLOUD_PROVIDER:-undefined} | Conta/Projeto: ${ACCOUNT_ID:-undefined}"
+def format_response(status, body):
+    return {
+        "statusCode": status,
+        "headers": {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type,Authorization",
+            "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
+        },
+        "body": json.dumps(body, ensure_ascii=True)
+    }
 
-# =============== Helpers ===============
-get_param() {
-  aws ssm get-parameter --name "$1" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo ""
-}
+def get_user_id(event):
+    """Safely derive user identity for DynamoDB session key"""
+    try:
+        ctx = event.get("requestContext", {})
+        identity = ctx.get("identity", {})
+        user = identity.get("userArn") or identity.get("cognitoIdentityId") or identity.get("sourceIp")
+        if not user:
+            user = "anonymous"
+        return str(user)
+    except Exception:
+        return "anonymous"
 
-fetch_credentials() {
-  local path="/clients/${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/credentials/access"
-  log INFO "🔹 Buscando credenciais em ${path}"
-  get_param "$path"
-}
+# ===== Parameter Store Helpers =====
+def get_ssm_parameter(path):
+    if not path.startswith("/"):
+        path = f"/{path}"
+    try:
+        response = ssm_client.get_parameter(Name=path)
+        return response["Parameter"]["Value"]
+    except ssm_client.exceptions.ParameterNotFound:
+        return None
+    except Exception as e:
+        log(f"SSM error for path {path}: {e}")
+        raise
 
-# =============== Autenticação Multicloud ===============
-authenticate() {
-  local creds raw_json start_auth end_auth duration
-  start_auth=$(date +%s)
-  creds=$(fetch_credentials)
+def list_all_clients():
+    """Lists all clients under /clients/"""
+    paginator = ssm_client.get_paginator("describe_parameters")
+    clients = set()
+    for page in paginator.paginate():
+        for param in page.get("Parameters", []):
+            name = param.get("Name", "")
+            match = re.match(r"^/clients/([^/]+)/", name)
+            if match:
+                clients.add(match.group(1))
+    return sorted(list(clients))
 
-  if [ -z "$creds" ]; then
-    log ERROR "❌ Nenhum parâmetro encontrado no SSM."
-    CREDS_SUMMARY="{}"
-    return 1
-  fi
+def list_accounts_for_client(client, cloud):
+    """Unified AWS/Azure/GCP account listing via SSM"""
+    legacy_param = f"/clients/{client}/{cloud}/accounts"
+    value = get_ssm_parameter(legacy_param)
+    if value:
+        accounts = [a.strip() for a in value.split(",") if a.strip()]
+        if accounts:
+            log(f"Accounts resolved from legacy CSV at {legacy_param}: {accounts}")
+            return accounts
 
-  # tenta decodificar base64 ou ler texto direto
-  if echo "$creds" | base64 --decode &>/dev/null; then
-    raw_json=$(echo "$creds" | base64 --decode)
-  else
-    raw_json="$creds"
-  fi
+    base_path = f"/clients/{client}/{cloud}/"
+    accounts_set = set()
+    paginator = ssm_client.get_paginator("get_parameters_by_path")
+    for page in paginator.paginate(Path=base_path, Recursive=True):
+        for param in page.get("Parameters", []):
+            name = param.get("Name", "")
+            if "/credentials/" in name:
+                parts = name.split("/")
+                if len(parts) >= 4 and parts[-2] == "credentials":
+                    account_id = parts[-3]
+                    if account_id:
+                        accounts_set.add(account_id)
 
-  CREDS_SUMMARY="$raw_json"
+    accounts = sorted(accounts_set)
+    log(f"Accounts resolved from SSM tree at {base_path}: {accounts}")
+    return accounts
 
-  case "$CLOUD_PROVIDER" in
-    aws)
-      log INFO "🪣 Iniciando autenticação AWS..."
-      export AWS_ACCESS_KEY_ID=$(echo "$raw_json" | jq -r '.AWS_ACCESS_KEY_ID')
-      export AWS_SECRET_ACCESS_KEY=$(echo "$raw_json" | jq -r '.AWS_SECRET_ACCESS_KEY')
-      export AWS_SESSION_TOKEN=$(echo "$raw_json" | jq -r '.AWS_SESSION_TOKEN // empty')
+# ===== ECS Helpers =====
+def get_latest_task_definition(family_prefix):
+    resp = ecs_client.list_task_definitions(familyPrefix=family_prefix, sort="DESC")
+    if not resp["taskDefinitionArns"]:
+        raise Exception(f"No task definition found for '{family_prefix}'")
+    return resp["taskDefinitionArns"][0]
 
-      export AWS_DEFAULT_REGION=$(echo "$raw_json" | jq -r '.AWS_DEFAULT_REGION')
-      if [ -z "$AWS_DEFAULT_REGION" ] || [ "$AWS_DEFAULT_REGION" = "null" ]; then
-        AWS_DEFAULT_REGION="${AWS_REGION:-us-east-1}"
-      fi
-      export AWS_REGION="$AWS_DEFAULT_REGION"
+def run_ecs_task(client, cloud, accounts, region):
+    """Launch ECS Fargate task for scan"""
+    task_def_arn = get_latest_task_definition("MultiCloudSecurityAssessment")
+    overrides = {
+        "containerOverrides": [
+            {
+                "name": "MultiCloudSecurityAssessment",
+                "environment": [
+                    {"name": "CLIENT_NAME", "value": client},
+                    {"name": "CLOUD_PROVIDER", "value": cloud},
+                    {"name": "ACCOUNT_ID", "value": accounts},
+                    {"name": "AWS_REGION", "value": region},
+                    {"name": "S3_BUCKET", "value": "multicloud-assessments"}
+                ]
+            }
+        ]
+    }
 
-      log INFO "🌎 Região AWS definida como: ${AWS_DEFAULT_REGION}"
+    ecs_response = ecs_client.run_task(
+        cluster=CLUSTER_ARN,
+        taskDefinition=task_def_arn,
+        launchType=LAUNCH_TYPE,
+        networkConfiguration={
+            "awsvpcConfiguration": {
+                "subnets": [SUBNET_ID],
+                "securityGroups": [SECURITY_GROUP_ID],
+                "assignPublicIp": "ENABLED"
+            }
+        },
+        overrides=overrides
+    )
 
-      if aws sts get-caller-identity >/dev/null 2>&1; then
-        log INFO "✅ Autenticação AWS bem-sucedida"
-      else
-        log ERROR "❌ Falha na autenticação AWS (verifique credenciais e região)"
-      fi
-      ;;
+    task_arns = [t["taskArn"] for t in ecs_response.get("tasks", [])]
+    return {"taskArns": task_arns, "taskDefinition": task_def_arn}
 
-    azure)
-      log INFO "🟦 Iniciando autenticação Azure..."
-      export AZURE_TENANT_ID=$(echo "$raw_json" | jq -r '.AZURE_TENANT_ID')
-      export AZURE_CLIENT_ID=$(echo "$raw_json" | jq -r '.AZURE_CLIENT_ID')
-      export AZURE_CLIENT_SECRET=$(echo "$raw_json" | jq -r '.AZURE_CLIENT_SECRET')
-      export AZURE_SUBSCRIPTION_ID=$(echo "$raw_json" | jq -r '.AZURE_SUBSCRIPTION_ID')
-      export AZURE_REGION=$(echo "$raw_json" | jq -r '.AZURE_REGION // empty')
+# ===== DynamoDB Helpers =====
+def save_session(user, data):
+    dynamo_client.put_item(
+        TableName=SESSION_TABLE,
+        Item={
+            "sessionId": {"S": user},
+            "data": {"S": json.dumps(data, ensure_ascii=True)},
+            "timestamp": {"S": datetime.datetime.utcnow().isoformat()}
+        }
+    )
 
-      if [ -z "$AZURE_REGION" ] || [ "$AZURE_REGION" = "null" ]; then
-        AZURE_REGION="${AWS_REGION:-eastus}"
-      fi
+def get_session(user):
+    resp = dynamo_client.get_item(TableName=SESSION_TABLE, Key={"sessionId": {"S": user}})
+    if "Item" in resp:
+        return json.loads(resp["Item"]["data"]["S"])
+    return None
 
-      log INFO "🌎 Região Azure definida como: ${AZURE_REGION}"
+def delete_session(user):
+    dynamo_client.delete_item(TableName=SESSION_TABLE, Key={"sessionId": {"S": user}})
 
-      if az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" >/dev/null 2>&1; then
-        log INFO "✅ Autenticação Azure bem-sucedida"
-      else
-        log ERROR "❌ Falha na autenticação Azure"
-      fi
-      ;;
+def save_history(user, command, result):
+    try:
+        dynamo_client.put_item(
+            TableName=HISTORY_TABLE,
+            Item={
+                "id": {"S": str(uuid.uuid4())},
+                "user": {"S": user},
+                "command": {"S": command},
+                "result": {"S": json.dumps(result, ensure_ascii=True)},
+                "timestamp": {"S": datetime.datetime.utcnow().isoformat()}
+            }
+        )
+    except Exception as e:
+        log(f"DynamoDB logging failed: {e}")
 
-    gcp)
-      log INFO "🟩 Iniciando autenticação GCP..."
-      mkdir -p /root/.config/gcloud
-      echo "$raw_json" > /root/.config/gcloud/application_default_credentials.json
-      export GOOGLE_APPLICATION_CREDENTIALS="/root/.config/gcloud/application_default_credentials.json"
+# ===== Command Parser =====
+def parse_command(text):
+    text = normalize(text)
 
-      export GCP_REGION=$(echo "$raw_json" | jq -r '.GCP_REGION // empty')
-      if [ -z "$GCP_REGION" ] || [ "$GCP_REGION" = "null" ]; then
-        GCP_REGION="${AWS_REGION:-us-central1}"
-      fi
-      log INFO "🌎 Região GCP definida como: ${GCP_REGION}"
+    # === List all clients ===
+    if re.search(r"\b(list|show|display)\s+all\s+(clients|customers)\b", text):
+        return {"action": "list_clients"}
 
-      if gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS" >/dev/null 2>&1; then
-        log INFO "✅ Autenticação GCP bem-sucedida"
-      else
-        log ERROR "❌ Falha na autenticação GCP"
-      fi
-      ;;
+    # === List accounts ===
+    match = re.match(r".*list\s+all\s+([a-z0-9\-]+)\s+accounts\s+for\s+client\s+([a-z0-9\-]+).*", text)
+    if match:
+        return {"action": "list_accounts", "cloud": match.group(1), "client": match.group(2)}
 
-    *)
-      log ERROR "❌ Provedor de nuvem desconhecido: ${CLOUD_PROVIDER}"
-      exit 1
-      ;;
-  esac
+    # === Run scan (universal regex with region enforcement) ===
+    match = re.match(
+        r".*(run|start|execute|perform|launch|do)\s+(scan|assessment)\s*"
+        r"(for\s+client\s+|client\s+)?(?P<client>[a-z0-9\-]+)\s*"
+        r"(in|on)?\s*(?P<cloud>aws|azure|gcp)\s*"
+        r"(region\s+(?P<region>[a-z0-9\-]+))?\s*"
+        r"(account|accounts)?\s*(?P<accounts>[0-9a-z,\-]{6,}).*",
+        text
+    )
+    if match:
+        region = match.group("region")
+        accounts = match.group("accounts")
+        if not region:
+            return {"error": "Missing region. Please specify region (e.g., us-east-1, eastus, us-central1)."}
+        return {
+            "action": "run_scan",
+            "client": match.group("client"),
+            "cloud": match.group("cloud"),
+            "region": region,
+            "accounts": accounts
+        }
 
-  end_auth=$(date +%s)
-  duration=$((end_auth - start_auth))
-  log INFO "⏱️ Duração da autenticação (${CLOUD_PROVIDER}): ${duration}s"
-}
+    # === Confirm ===
+    if text in ["yes", "y"]:
+        return {"action": "confirm"}
 
-# =============== Execução do Scan ===============
-run_scan() {
-  local output_file="${OUTPUT_DIR}/${CLOUD_PROVIDER}_${ACCOUNT_ID}_${TIMESTAMP}.json"
-  log INFO "▶️ Executando Prowler (${CLOUD_PROVIDER}) para ${ACCOUNT_ID}"
-  local start_scan=$(date +%s)
+    # === List history ===
+    if re.search(r"\b(show|list|display)\s+(last|recent)\s+(scans|executions)\b", text):
+        return {"action": "list_history"}
 
-  case "$CLOUD_PROVIDER" in
-    aws)
-      export AWS_REGION="${AWS_REGION:-us-east-1}"
-      prowler aws \
-        -M json-asff \
-        --output-filename "$(basename "$output_file")" \
-        --output-directory "$OUTPUT_DIR" \
-        && log INFO "✅ Scan AWS concluído" \
-        || log ERROR "⚠️ Falha no scan AWS"
-      ;;
-    azure)
-      prowler azure \
-        --subscription-ids "$AZURE_SUBSCRIPTION_ID" \
-        -M json \
-        --output-filename "$(basename "$output_file")" \
-        --output-directory "$OUTPUT_DIR" \
-        && log INFO "✅ Scan Azure concluído" \
-        || log ERROR "⚠️ Falha no scan Azure"
-      ;;
-    gcp)
-      prowler gcp \
-        --project-ids "$ACCOUNT_ID" \
-        -M json \
-        --output-filename "$(basename "$output_file")" \
-        --output-directory "$OUTPUT_DIR" \
-        && log INFO "✅ Scan GCP concluído" \
-        || log ERROR "⚠️ Falha no scan GCP"
-      ;;
-    *)
-      log ERROR "❌ Provedor não suportado: $CLOUD_PROVIDER"
-      exit 1
-      ;;
-  esac
+    return {"action": "unknown"}
 
-  if [ -f "$output_file" ]; then
-    log INFO "📄 Relatório gerado: $output_file"
-  else
-    log WARN "⚠️ Nenhum relatório gerado para ${CLOUD_PROVIDER}_${ACCOUNT_ID}"
-  fi
+# ===== Lambda Handler =====
+def lambda_handler(event, context):
+    log("=== Incoming event ===")
+    log(json.dumps(event, indent=2, ensure_ascii=True))
 
-  local end_scan=$(date +%s)
-  log INFO "⏱️ Duração do scan: $((end_scan - start_scan))s"
-}
+    if event.get("httpMethod") == "OPTIONS":
+        return format_response(200, {"ok": True})
 
-# =============== Upload S3 ===============
-upload_to_s3() {
-  local s3_prefix="${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/${TIMESTAMP}"
-  local start_upload=$(date +%s)
-  log INFO "📤 Enviando resultados para s3://${S3_BUCKET}/${s3_prefix}/"
+    try:
+        body = json.loads(event.get("body", "{}"))
+        command = body.get("text", "")
+        user = get_user_id(event)
+        parsed = parse_command(command)
 
-  aws s3 cp "$OUTPUT_DIR" "s3://${S3_BUCKET}/${s3_prefix}/" --recursive --region "${AWS_REGION:-us-east-1}" \
-    && log INFO "✅ Upload concluído" \
-    || log ERROR "❌ Falha no upload para S3"
+        if "error" in parsed:
+            return format_response(400, parsed)
 
-  local end_upload=$(date +%s)
-  log INFO "⏱️ Duração do upload: $((end_upload - start_upload))s"
-}
+        # === List clients ===
+        if parsed["action"] == "list_clients":
+            clients = list_all_clients()
+            if not clients:
+                return format_response(404, {"error": "No clients found."})
+            return format_response(200, {"clients": clients})
 
-# =============== Execução Principal ===============
-authenticate || true
-run_scan || true
-upload_to_s3 || true
+        # === List accounts ===
+        if parsed["action"] == "list_accounts":
+            accounts = list_accounts_for_client(parsed["client"], parsed["cloud"])
+            if not accounts:
+                return format_response(404, {"error": f"No accounts for {parsed['client']} in {parsed['cloud']}."})
+            return format_response(200, {"client": parsed["client"], "cloud": parsed["cloud"], "accounts": accounts})
 
-# =============== Diagnóstico Final ===============
-END_TIME=$(date +%s)
-TOTAL_DURATION=$((END_TIME - START_TIME))
+        # === Run scan (ask for confirmation) ===
+        if parsed["action"] == "run_scan":
+            save_session(user, parsed)
+            return format_response(
+                200,
+                {"message": f"Do you want to start a security assessment for client '{parsed['client']}', "
+                            f"cloud '{parsed['cloud']}', region '{parsed['region']}', accounts: {parsed['accounts']}? "
+                            f"Reply 'yes' to confirm."}
+            )
 
-echo -e "\n========== 🔍 EXECUTION SUMMARY =========="
-echo "Session ID:      $SESSION_ID"
-echo "Client:          $CLIENT_NAME"
-echo "Cloud Provider:  $CLOUD_PROVIDER"
-echo "Account/Project: $ACCOUNT_ID"
-echo "Region:          ${AWS_REGION:-not-set}"
-echo "Bucket:          $S3_BUCKET"
-echo "Output Prefix:   ${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/${TIMESTAMP}/"
-echo "Duration:        ${TOTAL_DURATION}s"
-echo "------------------------------------------"
-echo "Credentials Summary (sanitized):"
-if [ -n "${CREDS_SUMMARY:-}" ]; then
-  printf '%s\n' "$CREDS_SUMMARY" | jq . 2>/dev/null || echo "(⚠️ unable to parse JSON safely)"
-else
-  echo "(no credentials summary available)"
-fi
-echo "=========================================="
+        # === Confirm scan ===
+        if parsed["action"] == "confirm":
+            session = get_session(user)
+            if not session:
+                return format_response(400, {"error": "No previous command found for confirmation."})
+
+            result = run_ecs_task(session["client"], session["cloud"], session["accounts"], session["region"])
+            delete_session(user)
+            save_history(user, f"scan {session['client']} {session['cloud']} {session['region']} {session['accounts']}", result)
+
+            return format_response(
+                200,
+                {
+                    "ok": True,
+                    "message": f"Security assessment started for {session['client']} ({session['cloud']}, {session['region']}): {session['accounts']}",
+                    **result
+                }
+            )
+
+        # === List history ===
+        if parsed["action"] == "list_history":
+            resp = dynamo_client.scan(TableName=HISTORY_TABLE, Limit=5)
+            items = sorted(resp.get("Items", []), key=lambda x: x["timestamp"]["S"], reverse=True)
+            history = [
+                {
+                    "timestamp": i["timestamp"]["S"],
+                    "command": i["command"]["S"],
+                    "result": json.loads(i["result"]["S"])
+                }
+                for i in items
+            ]
+            if not history:
+                return format_response(404, {"error": "No previous scans found."})
+            return format_response(200, {"recent_scans": history})
+
+        return format_response(400, {"error": "Unknown command."})
+
+    except Exception as e:
+        log(traceback.format_exc())
+        return format_response(500, {"error": str(e)})
