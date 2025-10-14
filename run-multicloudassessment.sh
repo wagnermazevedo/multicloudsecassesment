@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v3.9.5
+# MultiCloud Security Assessment Runner v4.0.0
 # ============================================================
 
 set -euo pipefail
@@ -9,7 +9,7 @@ export LANG=C.UTF-8
 SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v3.9.5"
+echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.0.0"
 
 # === Variáveis obrigatórias ===
 CLIENT_NAME="${CLIENT_NAME:-unknown}"
@@ -26,56 +26,63 @@ mkdir -p "$OUTPUT_DIR"
 # === Helper de log ===
 log() { echo "[RUNNER:$SESSION_ID] $(date -u +"%Y-%m-%dT%H:%M:%SZ") $1"; }
 
-# ===== Autenticação =====
+# ============================================================
+# 🔐 Função de Autenticação
+# ============================================================
 authenticate() {
   case "$CLOUD_PROVIDER" in
     aws)
-      log "[INFO] 🪣 Iniciando autenticação AWS..."
-      creds_json=$(aws ssm get-parameter \
-        --name "/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access" \
-        --with-decryption \
-        --query "Parameter.Value" \
-        --output text 2>/dev/null || true)
+      log "[INFO] 🪣 Iniciando autenticação AWS (modo dinâmico sem sessão persistida)..."
 
-      if [[ -z "$creds_json" ]]; then
-        log "[ERROR] ❌ Nenhum parâmetro encontrado no SSM em /clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access"
+      ACCESS_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access"
+      SECRET_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/secret"
+
+      ACCESS_KEY=$(aws ssm get-parameter --with-decryption --name "$ACCESS_PATH" --query "Parameter.Value" --output text 2>/dev/null || echo "")
+      SECRET_KEY=$(aws ssm get-parameter --with-decryption --name "$SECRET_PATH" --query "Parameter.Value" --output text 2>/dev/null || echo "")
+
+      if [[ -z "$ACCESS_KEY" || -z "$SECRET_KEY" ]]; then
+        log "[ERROR] ❌ Credenciais não encontradas em $ACCESS_PATH ou $SECRET_PATH"
         return 1
       fi
 
-      # Sanitiza possíveis prefixos inválidos
-      creds_json="$(echo "$creds_json" | sed 's/^PARAMETER.*{/{/')"
+      log "[INFO] 🔑 Credenciais base recuperadas. Solicitando token STS temporário..."
+      TOKEN_JSON=$(aws sts get-session-token \
+        --duration-seconds 3600 \
+        --region "$AWS_REGION" \
+        --output json \
+        --cli-binary-format raw-in-base64-out \
+        --query 'Credentials' \
+        --access-key "$ACCESS_KEY" \
+        --secret-key "$SECRET_KEY" 2>/dev/null || true)
 
-      if ! echo "$creds_json" | jq empty >/dev/null 2>&1; then
-        log "[ERROR] ❌ JSON de credenciais AWS inválido. Conteúdo bruto:"
-        echo "$creds_json" | head -n 5
+      if [[ -z "$TOKEN_JSON" ]] || echo "$TOKEN_JSON" | grep -qi "error"; then
+        log "[ERROR] ❌ Falha ao gerar token STS. Resposta:"
+        echo "$TOKEN_JSON"
         return 1
       fi
 
-      AWS_ACCESS_KEY_ID=$(echo "$creds_json" | jq -r '.AWS_ACCESS_KEY_ID')
-      AWS_SECRET_ACCESS_KEY=$(echo "$creds_json" | jq -r '.AWS_SECRET_ACCESS_KEY')
-      AWS_SESSION_TOKEN=$(echo "$creds_json" | jq -r '.AWS_SESSION_TOKEN')
+      AWS_ACCESS_KEY_ID=$(echo "$TOKEN_JSON" | jq -r '.AccessKeyId')
+      AWS_SECRET_ACCESS_KEY=$(echo "$TOKEN_JSON" | jq -r '.SecretAccessKey')
+      AWS_SESSION_TOKEN=$(echo "$TOKEN_JSON" | jq -r '.SessionToken')
 
-      if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
-        log "[ERROR] ❌ Credenciais incompletas encontradas."
+      if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" || -z "$AWS_SESSION_TOKEN" ]]; then
+        log "[ERROR] ❌ Token STS inválido. Campos obrigatórios ausentes."
         return 1
       fi
 
       export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_DEFAULT_REGION="$AWS_REGION"
 
       log "[INFO] 🌎 Região AWS definida como: $AWS_REGION"
-      log "[INFO] ✅ Autenticação AWS bem-sucedida"
+      log "[INFO] ✅ Sessão autenticada (token STS temporário ativo por 1h)"
       ;;
-    
+
     azure)
       log "[INFO] ☁️ Iniciando autenticação Azure..."
-      creds_json=$(aws ssm get-parameter \
-        --name "/clients/$CLIENT_NAME/azure/$ACCOUNT_ID/credentials/access" \
-        --with-decryption \
-        --query "Parameter.Value" \
-        --output text 2>/dev/null || true)
+      CREDS_PATH="/clients/$CLIENT_NAME/azure/$ACCOUNT_ID/credentials/access"
+      creds_json=$(aws ssm get-parameter --name "$CREDS_PATH" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || true)
 
       if [[ -z "$creds_json" ]]; then
-        log "[ERROR] ❌ Credenciais Azure ausentes no SSM."
+        log "[ERROR] ❌ Credenciais Azure ausentes em $CREDS_PATH"
         return 1
       fi
 
@@ -92,17 +99,14 @@ authenticate() {
       az account set --subscription "$AZURE_SUBSCRIPTION_ID"
       log "[INFO] ✅ Autenticação Azure concluída"
       ;;
-    
+
     gcp)
       log "[INFO] 🌍 Iniciando autenticação GCP..."
-      creds_json=$(aws ssm get-parameter \
-        --name "/clients/$CLIENT_NAME/gcp/$ACCOUNT_ID/credentials/access" \
-        --with-decryption \
-        --query "Parameter.Value" \
-        --output text 2>/dev/null || true)
+      CREDS_PATH="/clients/$CLIENT_NAME/gcp/$ACCOUNT_ID/credentials/access"
+      creds_json=$(aws ssm get-parameter --name "$CREDS_PATH" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || true)
 
       if [[ -z "$creds_json" ]]; then
-        log "[ERROR] ❌ Credenciais GCP ausentes no SSM."
+        log "[ERROR] ❌ Credenciais GCP ausentes em $CREDS_PATH"
         return 1
       fi
 
@@ -111,7 +115,7 @@ authenticate() {
       gcloud config set project "$ACCOUNT_ID" >/dev/null
       log "[INFO] ✅ Autenticação GCP concluída"
       ;;
-    
+
     *)
       log "[ERROR] ❌ Provedor de nuvem não reconhecido: $CLOUD_PROVIDER"
       return 1
@@ -119,14 +123,16 @@ authenticate() {
   esac
 }
 
-# ===== Execução principal =====
+# ============================================================
+# 🚀 Execução principal
+# ============================================================
 if ! authenticate; then
   log "[ERROR] ⚠️ Falha na autenticação. Encerrando execução."
   exit 1
 fi
 
 SCAN_START=$(date +%s)
-log "[INFO] ▶️ Executando Prowler ($CLOUD_PROVIDER) para $ACCOUNT_ID"
+log "[INFO] ▶️ Executando Prowler para $CLOUD_PROVIDER ($ACCOUNT_ID)"
 
 case "$CLOUD_PROVIDER" in
   aws)
@@ -146,10 +152,11 @@ esac
 SCAN_END=$(date +%s)
 DURATION=$((SCAN_END - SCAN_START))
 
-log "[INFO] ⏱️ Duração do scan: ${DURATION}s"
 DEST="s3://$S3_BUCKET/$CLIENT_NAME/$CLOUD_PROVIDER/$ACCOUNT_ID/$(date -u +%Y%m%d-%H%M%S)/"
+
+log "[INFO] ⏱️ Duração do scan: ${DURATION}s"
 log "[INFO] 📤 Enviando resultados para $DEST"
-aws s3 cp "$OUTPUT_DIR" "$DEST" --recursive || log "[WARN] Falha parcial no upload."
+aws s3 cp "$OUTPUT_DIR" "$DEST" --recursive || log "[WARN] Falha parcial no upload"
 
 log "[INFO] ✅ Upload concluído"
 log "========== 🔍 EXECUTION SUMMARY =========="
