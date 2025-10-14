@@ -1,42 +1,46 @@
 #!/bin/bash
 set -euo pipefail
+trap 'echo "[ERRO] ❌ Linha $LINENO: comando \"$BASH_COMMAND\" falhou com código $?."' ERR
+
 echo "[RUNNER] 🧭 Iniciando execução do Multicloud Assessment Runner"
 
 # ==============================
-# 1️⃣ Variáveis básicas
+# 1️⃣ VARIÁVEIS BÁSICAS
 # ==============================
 TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
 OUTPUT_DIR="/tmp/output-${TIMESTAMP}"
 mkdir -p "$OUTPUT_DIR"
 
 # ==============================
-# 2️⃣ Funções auxiliares
+# 2️⃣ FUNÇÕES AUXILIARES
 # ==============================
 
-# Obtém valor de um parâmetro SSM com decodificação segura
 get_param() {
   local name="$1"
-  aws ssm get-parameter --name "$name" --with-decryption --output json 2>/dev/null \
-    | jq -r '.Parameter.Value // empty'
+  aws ssm get-parameter --name "$name" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo ""
 }
 
-# Busca credenciais no Parameter Store
+decode_base64_safe() {
+  local data="$1"
+  if [ -z "$data" ]; then
+    echo "[WARN] ⚠️ Base64 vazio recebido — ignorando decodificação."
+    return 1
+  fi
+  echo "$data" | tr -d '\r' | base64 --decode 2>/dev/null || {
+    echo "[ERRO] ❌ Falha ao decodificar Base64 (input inválido ou truncado)."
+    return 1
+  }
+}
+
 fetch_credentials() {
   local path="/clients/${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/credentials/access"
   echo "[RUNNER] 🔹 Buscando credenciais em $path"
   get_param "$path"
 }
 
-# Decodifica Base64 de forma segura
-decode_base64_safe() {
-  local data="$1"
-  echo "$data" | tr -d '\r' | base64 --decode 2>/dev/null || {
-    echo "[ERRO] ❌ Falha ao decodificar Base64. Conteúdo inválido no Parameter Store."
-    exit 1
-  }
-}
-
-# Autenticação multi-cloud
+# ==============================
+# 3️⃣ AUTENTICAÇÃO MULTICLOUD
+# ==============================
 authenticate() {
   local creds
   creds=$(fetch_credentials)
@@ -52,7 +56,7 @@ authenticate() {
         read -rp "AWS_SECRET_ACCESS_KEY: " AWS_SECRET_ACCESS_KEY
         read -rp "AWS_SESSION_TOKEN (opcional): " AWS_SESSION_TOKEN || true
       else
-        decode_base64_safe "$creds" > /tmp/aws_creds.json
+        decode_base64_safe "$creds" > /tmp/aws_creds.json || true
         export AWS_ACCESS_KEY_ID=$(jq -r '.AWS_ACCESS_KEY_ID' /tmp/aws_creds.json)
         export AWS_SECRET_ACCESS_KEY=$(jq -r '.AWS_SECRET_ACCESS_KEY' /tmp/aws_creds.json)
         export AWS_SESSION_TOKEN=$(jq -r '.AWS_SESSION_TOKEN // empty' /tmp/aws_creds.json)
@@ -72,7 +76,7 @@ authenticate() {
         read -rp "AZURE_CLIENT_SECRET: " AZURE_CLIENT_SECRET
         read -rp "AZURE_SUBSCRIPTION_ID: " AZURE_SUBSCRIPTION_ID
       else
-        decode_base64_safe "$creds" > /etc/prowler/credentials/azure.env
+        decode_base64_safe "$creds" > /etc/prowler/credentials/azure.env || true
         source /etc/prowler/credentials/azure.env
       fi
 
@@ -91,7 +95,7 @@ authenticate() {
         read -rp "Caminho do arquivo JSON da Service Account: " SA_PATH
         cp "$SA_PATH" /root/.config/gcloud/application_default_credentials.json
       else
-        decode_base64_safe "$creds" > /root/.config/gcloud/application_default_credentials.json
+        decode_base64_safe "$creds" > /root/.config/gcloud/application_default_credentials.json || true
       fi
 
       echo "[RUNNER] 🔐 Ativando conta de serviço GCP..."
@@ -108,7 +112,9 @@ authenticate() {
   esac
 }
 
-# Executa o Prowler
+# ==============================
+# 4️⃣ EXECUÇÃO DO SCAN
+# ==============================
 run_scan() {
   local output_file="${OUTPUT_DIR}/${CLOUD_PROVIDER}_${ACCOUNT_ID}_${TIMESTAMP}.json"
   echo "[RUNNER] ▶️ Executando Prowler (${CLOUD_PROVIDER})..."
@@ -132,7 +138,9 @@ run_scan() {
   fi
 }
 
-# Upload dos resultados ao S3
+# ==============================
+# 5️⃣ UPLOAD DOS RESULTADOS
+# ==============================
 upload_to_s3() {
   if [ "${CLOUD_PROVIDER}" != "aws" ]; then
     echo "[RUNNER] 🌐 Upload S3 é aplicável apenas para AWS. Pulando etapa."
@@ -149,12 +157,15 @@ upload_to_s3() {
 }
 
 # ==============================
-# 3️⃣ Execução principal
+# 6️⃣ EXECUÇÃO PRINCIPAL
 # ==============================
+echo "[RUNNER] 🚀 CLIENTE=${CLIENT_NAME} CLOUD=${CLOUD_PROVIDER} ACCOUNT=${ACCOUNT_ID}"
+
 authenticate
 run_scan
 upload_to_s3
 
 echo "[RUNNER] ✅ Scan finalizado com sucesso."
 echo "[RUNNER] Resultados disponíveis em: s3://${S3_BUCKET}/${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/${TIMESTAMP}/"
+
 
