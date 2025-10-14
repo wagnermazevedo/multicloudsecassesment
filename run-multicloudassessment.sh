@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.0.4
+# MultiCloud Security Assessment Runner v4.0.5
 # Autor: Wagner Azevedo
 # Descrição:
-#   - Gera token STS automaticamente
-#   - Corrige extração JSON (sem aspas nem ruído)
-#   - Regenera STS se falhar
+#   - Correção para JSON escapado retornado do SSM
+#   - Geração automática de token STS
+#   - Revalidação e fallback em caso de erro
+#   - Suporte Azure e GCP revisado
 # ============================================================
 
 set -euo pipefail
@@ -14,7 +15,7 @@ export LANG=C.UTF-8
 SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.0.4"
+echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.0.5"
 
 CLIENT_NAME="${CLIENT_NAME:-unknown}"
 CLOUD_PROVIDER="${CLOUD_PROVIDER:-unknown}"
@@ -46,14 +47,20 @@ authenticate() {
         return 1
       fi
 
-      # Detecta se o parâmetro é JSON consolidado
+      # Detecta e trata JSON escapado
       if echo "$ACCESS_RAW" | jq empty >/dev/null 2>&1; then
-        AWS_ACCESS_KEY_ID=$(echo "$ACCESS_RAW" | jq -r '.AWS_ACCESS_KEY_ID')
-        AWS_SECRET_ACCESS_KEY=$(echo "$ACCESS_RAW" | jq -r '.AWS_SECRET_ACCESS_KEY')
+        CLEAN_JSON="$ACCESS_RAW"
+      elif echo "$ACCESS_RAW" | grep -q '{\\\"'; then
+        log "[DEBUG] 🧹 Detectado JSON escapado — descompactando..."
+        CLEAN_JSON=$(echo "$ACCESS_RAW" | sed 's/^"//' | sed 's/"$//' | jq -r 'fromjson')
       else
         log "[ERROR] ❌ O parâmetro $ACCESS_PATH deve estar em formato JSON consolidado."
+        log "[DEBUG] Conteúdo bruto: ${ACCESS_RAW:0:120}..."
         return 1
       fi
+
+      AWS_ACCESS_KEY_ID=$(echo "$CLEAN_JSON" | jq -r '.AWS_ACCESS_KEY_ID')
+      AWS_SECRET_ACCESS_KEY=$(echo "$CLEAN_JSON" | jq -r '.AWS_SECRET_ACCESS_KEY')
 
       if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
         log "[ERROR] ❌ Credenciais base incompletas ou inválidas."
@@ -114,17 +121,27 @@ authenticate() {
       CREDS_PATH="/clients/$CLIENT_NAME/azure/$ACCOUNT_ID/credentials/access"
       CREDS_RAW=$(aws ssm get-parameter --with-decryption --name "$CREDS_PATH" --query "Parameter.Value" --output text 2>&1 || true)
 
-      if echo "$CREDS_RAW" | jq empty >/dev/null 2>&1; then
-        AZURE_TENANT_ID=$(echo "$CREDS_RAW" | jq -r '.AZURE_TENANT_ID')
-        AZURE_CLIENT_ID=$(echo "$CREDS_RAW" | jq -r '.AZURE_CLIENT_ID')
-        AZURE_CLIENT_SECRET=$(echo "$CREDS_RAW" | jq -r '.AZURE_CLIENT_SECRET')
-        AZURE_SUBSCRIPTION_ID=$(echo "$CREDS_RAW" | jq -r '.AZURE_SUBSCRIPTION_ID')
-      else
-        log "[ERROR] ❌ Credenciais Azure inválidas (esperado JSON)."
+      if [[ -z "$CREDS_RAW" ]]; then
+        log "[ERROR] ❌ Credenciais Azure não encontradas."
         return 1
       fi
 
-      export AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_SUBSCRIPTION_ID
+      # Corrige escapes se necessário
+      if echo "$CREDS_RAW" | jq empty >/dev/null 2>&1; then
+        CLEAN_JSON="$CREDS_RAW"
+      elif echo "$CREDS_RAW" | grep -q '{\\\"'; then
+        log "[DEBUG] 🧹 Detectado JSON escapado — descompactando..."
+        CLEAN_JSON=$(echo "$CREDS_RAW" | sed 's/^"//' | sed 's/"$//' | jq -r 'fromjson')
+      else
+        log "[ERROR] ❌ Formato inválido de credenciais Azure."
+        return 1
+      fi
+
+      export AZURE_TENANT_ID=$(echo "$CLEAN_JSON" | jq -r '.AZURE_TENANT_ID')
+      export AZURE_CLIENT_ID=$(echo "$CLEAN_JSON" | jq -r '.AZURE_CLIENT_ID')
+      export AZURE_CLIENT_SECRET=$(echo "$CLEAN_JSON" | jq -r '.AZURE_CLIENT_SECRET')
+      export AZURE_SUBSCRIPTION_ID=$(echo "$CLEAN_JSON" | jq -r '.AZURE_SUBSCRIPTION_ID')
+
       az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" >/dev/null 2>&1 || {
         log "[ERROR] ❌ Falha ao autenticar no Azure."; return 1; }
       az account set --subscription "$AZURE_SUBSCRIPTION_ID" >/dev/null 2>&1 || {
@@ -137,10 +154,18 @@ authenticate() {
       CREDS_PATH="/clients/$CLIENT_NAME/gcp/$ACCOUNT_ID/credentials/access"
       CREDS_RAW=$(aws ssm get-parameter --with-decryption --name "$CREDS_PATH" --query "Parameter.Value" --output text 2>&1 || true)
 
+      if [[ -z "$CREDS_RAW" ]]; then
+        log "[ERROR] ❌ Credenciais GCP não encontradas."
+        return 1
+      fi
+
       if echo "$CREDS_RAW" | jq empty >/dev/null 2>&1; then
         echo "$CREDS_RAW" > /tmp/gcp_creds.json
+      elif echo "$CREDS_RAW" | grep -q '{\\\"'; then
+        log "[DEBUG] 🧹 Detectado JSON escapado — descompactando..."
+        echo "$CREDS_RAW" | sed 's/^"//' | sed 's/"$//' | jq -r 'fromjson' > /tmp/gcp_creds.json
       else
-        log "[ERROR] ❌ Credenciais GCP inválidas (esperado JSON Service Account)."
+        log "[ERROR] ❌ Formato inválido de credenciais GCP."
         return 1
       fi
 
@@ -197,3 +222,4 @@ log "Account:    $ACCOUNT_ID"
 log "Region:     $AWS_REGION"
 log "Duration:   ${DURATION}s"
 log "=========================================="
+
