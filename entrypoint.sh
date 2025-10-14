@@ -21,6 +21,7 @@ CLOUD_PROVIDER=$(echo "$CLOUD_PROVIDER" | tr '[:upper:]' '[:lower:]')
 # ==============================
 install_base_deps() {
   apt-get update -y && apt-get install -y --no-install-recommends jq curl unzip bash wget ca-certificates gnupg lsb-release apt-transport-https dos2unix
+  apt-get install -y --no-install-recommends uuid-runtime && 
   rm -rf /var/lib/apt/lists/*
 }
 
