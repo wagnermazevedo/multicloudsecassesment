@@ -141,4 +141,58 @@ run_scan() {
         && log INFO "✅ Scan AWS concluído" || log ERROR "⚠️ Falha no scan AWS"
       ;;
     azure)
-      prowler azure --subscription-ids "$ACCOUNT_ID" -M json -o "$OUTPUT_DIR" --output-filename "$(basename "
+      prowler azure --subscription-ids "$ACCOUNT_ID" -M json -o "$OUTPUT_DIR" --output-filename "$(basename "$output_file")" \
+        && log INFO "✅ Scan Azure concluído" || log ERROR "⚠️ Falha no scan Azure"
+      ;;
+    gcp)
+      prowler gcp --project-ids "$ACCOUNT_ID" -M json -o "$OUTPUT_DIR" --output-filename "$(basename "$output_file")" \
+        && log INFO "✅ Scan GCP concluído" || log ERROR "⚠️ Falha no scan GCP"
+      ;;
+    *)
+      log ERROR "❌ Cloud provider inválido: $CLOUD_PROVIDER"
+      ;;
+  esac
+
+  if [ -f "$output_file" ]; then
+    log INFO "📄 Relatório gerado com sucesso: $output_file"
+  else
+    log WARN "⚠️ Nenhum relatório gerado para ${CLOUD_PROVIDER}_${ACCOUNT_ID}"
+  fi
+}
+
+# ==============================
+# UPLOAD PARA S3
+# ==============================
+upload_to_s3() {
+  local s3_prefix="${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/${TIMESTAMP}"
+  log INFO "📤 Enviando resultados para s3://${S3_BUCKET}/${s3_prefix}/"
+  aws s3 cp "$OUTPUT_DIR" "s3://${S3_BUCKET}/${s3_prefix}/" --recursive --region "$AWS_REGION" \
+    && log INFO "✅ Upload concluído" \
+    || log ERROR "❌ Falha no upload para S3"
+}
+
+# ==============================
+# EXECUÇÃO PRINCIPAL
+# ==============================
+authenticate
+run_scan
+upload_to_s3
+
+# ==============================
+# DIAGNÓSTICO FINAL
+# ==============================
+END_TIME=$(date +%s)
+TOTAL_DURATION=$((END_TIME - START_TIME))
+
+echo -e "\n========== 🔍 EXECUTION SUMMARY =========="
+echo "Session ID:      $SESSION_ID"
+echo "Client:          $CLIENT_NAME"
+echo "Cloud Provider:  $CLOUD_PROVIDER"
+echo "Account/Project: $ACCOUNT_ID"
+echo "Bucket:          $S3_BUCKET"
+echo "Output Prefix:   ${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/${TIMESTAMP}/"
+echo "Duration:        ${TOTAL_DURATION}s"
+echo "------------------------------------------"
+echo "Credentials Summary (safely truncated):"
+echo "$CREDS_SUMMARY" | jq .
+echo "=========================================="
