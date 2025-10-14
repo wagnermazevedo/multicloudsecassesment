@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.0.3
+# MultiCloud Security Assessment Runner v4.0.4
 # Autor: Wagner Azevedo
 # Descrição:
-#   - Autenticação automática AWS, Azure e GCP
-#   - Gera token STS em runtime (sem armazenar no SSM)
-#   - Se falhar, regenera automaticamente
-#   - Logs detalhados para CloudWatch
+#   - Gera token STS automaticamente
+#   - Corrige extração JSON (sem aspas nem ruído)
+#   - Regenera STS se falhar
 # ============================================================
 
 set -euo pipefail
@@ -15,9 +14,8 @@ export LANG=C.UTF-8
 SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.0.3"
+echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.0.4"
 
-# === Variáveis obrigatórias ===
 CLIENT_NAME="${CLIENT_NAME:-unknown}"
 CLOUD_PROVIDER="${CLOUD_PROVIDER:-unknown}"
 ACCOUNT_ID="${ACCOUNT_ID:-undefined}"
@@ -29,11 +27,10 @@ echo "[RUNNER:$SESSION_ID] [INFO] 🔹 Cliente: $CLIENT_NAME | Nuvem: $CLOUD_PRO
 OUTPUT_DIR="/tmp/output-${SESSION_ID}"
 mkdir -p "$OUTPUT_DIR"
 
-# === Helper de log ===
 log() { echo "[RUNNER:$SESSION_ID] $(date -u +"%Y-%m-%dT%H:%M:%SZ") $1"; }
 
 # ============================================================
-# 🔐 Função de Autenticação
+# 🔐 Autenticação
 # ============================================================
 authenticate() {
   case "$CLOUD_PROVIDER" in
@@ -41,29 +38,40 @@ authenticate() {
       log "[INFO] 🪣 Iniciando autenticação AWS (STS autogerado, sem sessão persistida)..."
 
       ACCESS_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access"
-      SECRET_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/secret"
-
-      # --- Lê credenciais base ---
+      log "[DEBUG] 🔍 Lendo $ACCESS_PATH"
       ACCESS_RAW=$(aws ssm get-parameter --with-decryption --name "$ACCESS_PATH" --query "Parameter.Value" --output text 2>&1 || true)
-      SECRET_RAW=$(aws ssm get-parameter --with-decryption --name "$SECRET_PATH" --query "Parameter.Value" --output text 2>&1 || true)
 
-      if [[ -z "$ACCESS_RAW" || -z "$SECRET_RAW" || "$ACCESS_RAW" == *"ParameterNotFound"* ]]; then
-        log "[ERROR] ❌ Falha ao obter credenciais base em $ACCESS_PATH/$SECRET_PATH"
+      if [[ -z "$ACCESS_RAW" || "$ACCESS_RAW" == *"ParameterNotFound"* ]]; then
+        log "[ERROR] ❌ Falha ao obter $ACCESS_PATH"
         return 1
       fi
 
-      log "[DEBUG] ✅ ACCESS_KEY prefix: ${ACCESS_RAW:0:6}********"
-      log "[DEBUG] ✅ SECRET_KEY prefix: ${SECRET_RAW:0:6}********"
+      # Detecta se o parâmetro é JSON consolidado
+      if echo "$ACCESS_RAW" | jq empty >/dev/null 2>&1; then
+        AWS_ACCESS_KEY_ID=$(echo "$ACCESS_RAW" | jq -r '.AWS_ACCESS_KEY_ID')
+        AWS_SECRET_ACCESS_KEY=$(echo "$ACCESS_RAW" | jq -r '.AWS_SECRET_ACCESS_KEY')
+      else
+        log "[ERROR] ❌ O parâmetro $ACCESS_PATH deve estar em formato JSON consolidado."
+        return 1
+      fi
 
-      # --- Gera token STS em runtime ---
+      if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
+        log "[ERROR] ❌ Credenciais base incompletas ou inválidas."
+        return 1
+      fi
+
+      log "[DEBUG] ✅ ACCESS_KEY prefix: ${AWS_ACCESS_KEY_ID:0:6}********"
+      log "[DEBUG] ✅ SECRET_KEY prefix: ${AWS_SECRET_ACCESS_KEY:0:6}********"
+
+      # --- Gera token STS ---
       log "[INFO] 🔑 Solicitando token STS temporário (1h)..."
-      TOKEN_JSON=$(AWS_ACCESS_KEY_ID="$ACCESS_RAW" AWS_SECRET_ACCESS_KEY="$SECRET_RAW" \
+      TOKEN_JSON=$(AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
         aws sts get-session-token --duration-seconds 3600 --region "$AWS_REGION" --output json 2>&1 || true)
 
       if echo "$TOKEN_JSON" | grep -qi "error"; then
         log "[WARN] ⚠️ Primeira tentativa de token STS falhou. Tentando novamente..."
         sleep 3
-        TOKEN_JSON=$(AWS_ACCESS_KEY_ID="$ACCESS_RAW" AWS_SECRET_ACCESS_KEY="$SECRET_RAW" \
+        TOKEN_JSON=$(AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
           aws sts get-session-token --duration-seconds 3600 --region "$AWS_REGION" --output json 2>&1 || true)
       fi
 
@@ -78,19 +86,18 @@ authenticate() {
       AWS_SESSION_TOKEN=$(echo "$TOKEN_JSON" | jq -r '.Credentials.SessionToken')
 
       if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" || -z "$AWS_SESSION_TOKEN" ]]; then
-        log "[ERROR] ❌ Token STS inválido (campos ausentes)."
+        log "[ERROR] ❌ Token STS inválido."
         return 1
       fi
 
       export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_DEFAULT_REGION="$AWS_REGION"
 
-      # --- Valida sessão com STS ---
       log "[INFO] 🔍 Validando sessão STS..."
       VALIDATION=$(aws sts get-caller-identity --output json 2>&1 || true)
 
       if echo "$VALIDATION" | grep -qi "error"; then
         log "[WARN] ⚠️ Sessão STS inválida, regenerando token..."
-        TOKEN_JSON=$(AWS_ACCESS_KEY_ID="$ACCESS_RAW" AWS_SECRET_ACCESS_KEY="$SECRET_RAW" \
+        TOKEN_JSON=$(AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
           aws sts get-session-token --duration-seconds 3600 --region "$AWS_REGION" --output json 2>&1 || true)
         AWS_ACCESS_KEY_ID=$(echo "$TOKEN_JSON" | jq -r '.Credentials.AccessKeyId')
         AWS_SECRET_ACCESS_KEY=$(echo "$TOKEN_JSON" | jq -r '.Credentials.SecretAccessKey')
@@ -113,17 +120,11 @@ authenticate() {
         AZURE_CLIENT_SECRET=$(echo "$CREDS_RAW" | jq -r '.AZURE_CLIENT_SECRET')
         AZURE_SUBSCRIPTION_ID=$(echo "$CREDS_RAW" | jq -r '.AZURE_SUBSCRIPTION_ID')
       else
-        log "[ERROR] ❌ Credenciais Azure inválidas. Esperado JSON."
-        return 1
-      fi
-
-      if [[ -z "$AZURE_CLIENT_ID" || -z "$AZURE_CLIENT_SECRET" || -z "$AZURE_TENANT_ID" || -z "$AZURE_SUBSCRIPTION_ID" ]]; then
-        log "[ERROR] ❌ Campos obrigatórios Azure ausentes."
+        log "[ERROR] ❌ Credenciais Azure inválidas (esperado JSON)."
         return 1
       fi
 
       export AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_SUBSCRIPTION_ID
-      log "[INFO] 🔑 Autenticando no Azure..."
       az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" >/dev/null 2>&1 || {
         log "[ERROR] ❌ Falha ao autenticar no Azure."; return 1; }
       az account set --subscription "$AZURE_SUBSCRIPTION_ID" >/dev/null 2>&1 || {
@@ -139,7 +140,7 @@ authenticate() {
       if echo "$CREDS_RAW" | jq empty >/dev/null 2>&1; then
         echo "$CREDS_RAW" > /tmp/gcp_creds.json
       else
-        log "[ERROR] ❌ Credenciais GCP inválidas. Esperado JSON Service Account."
+        log "[ERROR] ❌ Credenciais GCP inválidas (esperado JSON Service Account)."
         return 1
       fi
 
