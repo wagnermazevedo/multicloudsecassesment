@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.0.8
+# MultiCloud Security Assessment Runner v4.0.9
 # Autor: Wagner Azevedo
 # ============================================================
 # Alterações nesta versão:
-#   - Correção de PATH do AWS CLI em ambientes Poetry e Slim
-#   - AWS CLI obrigatório para todas as clouds (SSM backend)
-#   - Log explicativo de backend SSM universal
-#   - Melhoria de robustez na inspeção de parâmetros
-#   - Retenção de debug mascarado para segurança
+#   - Introduz variável AWS_SSM_REGION para isolar o backend SSM
+#   - Evita erros de endpoint AWS inválido (ex: eastus → us-east-1)
+#   - Mantém AWS_REGION original para execução do Prowler
+#   - Logs informativos do backend SSM
 # ============================================================
 
 set -euo pipefail
@@ -17,7 +16,7 @@ export LANG=C.UTF-8
 SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.0.8"
+echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.0.9"
 
 CLIENT_NAME="${CLIENT_NAME:-unknown}"
 CLOUD_PROVIDER="${CLOUD_PROVIDER:-unknown}"
@@ -26,25 +25,10 @@ AWS_REGION="${AWS_REGION:-us-east-1}"
 S3_BUCKET="${S3_BUCKET:-multicloud-assessments}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 
-echo "[RUNNER:$SESSION_ID] [INFO] 🔹 Cliente: $CLIENT_NAME | Nuvem: $CLOUD_PROVIDER | Conta/Projeto: $ACCOUNT_ID | Região: $AWS_REGION"
+# Região fixa para o backend SSM Parameter Store
+AWS_SSM_REGION="${AWS_SSM_REGION:-us-east-1}"
 
-# ============================================================
-# 🔧 PATH fix e verificação do AWS CLI
-# ============================================================
-if ! command -v aws >/dev/null 2>&1; then
-  for d in /usr/local/bin /usr/bin /bin; do
-    if [[ -x "$d/aws" ]]; then
-      export PATH="$d:$PATH"
-      echo "[ENTRYPOINT] ⚙️ AWS CLI detectado e PATH ajustado: $PATH"
-      break
-    fi
-  done
-fi
-
-if ! command -v aws >/dev/null 2>&1; then
-  echo "[ENTRYPOINT] ❌ AWS CLI não encontrado! É obrigatório para leitura de credenciais (SSM backend)."
-  exit 1
-fi
+echo "[RUNNER:$SESSION_ID] [INFO] 🔹 Cliente: $CLIENT_NAME | Nuvem: $CLOUD_PROVIDER | Conta/Projeto: $ACCOUNT_ID | Região Prowler: $AWS_REGION | SSM Backend: $AWS_SSM_REGION"
 
 OUTPUT_DIR="/tmp/output-${SESSION_ID}"
 mkdir -p "$OUTPUT_DIR"
@@ -53,10 +37,11 @@ mkdir -p "$OUTPUT_DIR"
 log() { echo "[RUNNER:$SESSION_ID] $(date -u +"%Y-%m-%dT%H:%M:%SZ") $1"; }
 
 # ============================================================
-# 🔎 Utilidades e funções de apoio
+# 🔧 Utilidades e funções auxiliares
 # ============================================================
 
-aws_cli() { aws --region "$AWS_REGION" "$@"; }
+# Usa região do backend SSM, não a cloud de destino
+aws_cli() { aws --region "$AWS_SSM_REGION" "$@"; }
 
 get_ssm_value() {
   local path="$1"
@@ -89,7 +74,7 @@ ssm__mask_preview() {
 
 ssm_dump_prefix() {
   local prefix="$1" next res
-  log "[DEBUG] 📚 SSM: inspecionando prefixo: ${prefix}"
+  log "[DEBUG] 📚 SSM: inspecionando prefixo: ${prefix} (região $AWS_SSM_REGION)"
   next=""
   while :; do
     if [[ -n "$next" ]]; then
@@ -122,11 +107,11 @@ ssm_show_param() {
 }
 
 # ============================================================
-# 🔐 Autenticação Multicloud (Azure, AWS, GCP)
+# 🔐 Autenticação Multicloud (AWS, Azure, GCP)
 # ============================================================
 
 authenticate() {
-  log "[INFO] 💾 Todas as credenciais são obtidas do AWS SSM Parameter Store (backend unificado)."
+  log "[INFO] 💾 Todas as credenciais são obtidas do AWS SSM Parameter Store (backend unificado na região $AWS_SSM_REGION)."
 
   case "$CLOUD_PROVIDER" in
     aws)
@@ -139,7 +124,7 @@ authenticate() {
 
       ACCESS_RAW="$(get_ssm_value "$CREDS_PATH")"
       if [[ -z "$ACCESS_RAW" ]]; then
-        log "[ERROR] ❌ Credenciais AWS não encontradas."
+        log "[ERROR] ❌ Credenciais AWS não encontradas em $CREDS_PATH."
         ssm_dump_prefix "$PREFIX"; ssm_show_param "$CREDS_PATH"
         return 1
       fi
@@ -239,16 +224,13 @@ log "[INFO] ▶️ Executando Prowler para $CLOUD_PROVIDER ($ACCOUNT_ID)"
 
 case "$CLOUD_PROVIDER" in
   aws)
-    prowler aws -M json-asff --output-filename "prowler-aws.json" \
-      --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan AWS"
+    prowler aws -M json-asff --output-filename "prowler-aws.json" --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan AWS"
     ;;
   azure)
-    prowler azure -M json-asff --output-filename "prowler-azure.json" \
-      --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan Azure"
+    prowler azure -M json-asff --output-filename "prowler-azure.json" --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan Azure"
     ;;
   gcp)
-    prowler gcp -M json-asff --output-filename "prowler-gcp.json" \
-      --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan GCP"
+    prowler gcp -M json-asff --output-filename "prowler-gcp.json" --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan GCP"
     ;;
 esac
 
@@ -267,5 +249,6 @@ log "Client:     $CLIENT_NAME"
 log "Cloud:      $CLOUD_PROVIDER"
 log "Account:    $ACCOUNT_ID"
 log "Region:     $AWS_REGION"
+log "SSM Region: $AWS_SSM_REGION"
 log "Duration:   ${DURATION}s"
 log "=========================================="
