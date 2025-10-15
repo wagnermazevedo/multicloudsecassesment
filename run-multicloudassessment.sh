@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.3
+# MultiCloud Security Assessment Runner v4.1.4
 # Autor: Wagner Azevedo
 # Alterações nesta versão:
-#   - Correção de autenticação GCP (arquivos isolados por projeto)
+#   - Correção de autenticação GCP (JSON escapado / base64 / limpo)
+#   - Filtragem de projeto por ACCOUNT_ID (sem múltiplos scans)
 #   - Logs contextualizados com Client/Cloud/Account
 #   - Suporte Prowler v4 (--project-id)
 #   - Remoção de dependência de região para GCP
@@ -15,7 +16,7 @@ export LANG=C.UTF-8
 SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.3"
+echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.4"
 
 # === Variáveis obrigatórias ===
 CLIENT_NAME="${CLIENT_NAME:-unknown}"
@@ -57,21 +58,6 @@ get_ssm_value() {
     --query "Parameter.Value" --output text 2>/dev/null || echo ""
 }
 
-parse_maybe_escaped_json() {
-  local raw="$(cat)"
-  [[ -z "$raw" ]] && { echo ""; return; }
-
-  if echo "$raw" | jq empty >/dev/null 2>&1; then
-    echo "$raw"; return
-  fi
-
-  if echo "$raw" | grep -q '{\\\"'; then
-    echo "$raw" | sed 's/^"//' | sed 's/"$//' | jq -r 'fromjson'
-    return
-  fi
-  echo ""
-}
-
 # ============================================================
 # 🔐 Autenticação MultiCloud
 # ============================================================
@@ -84,7 +70,7 @@ authenticate() {
       ACCESS_RAW="$(get_ssm_value "$ACCESS_PATH")"
       [[ -z "$ACCESS_RAW" ]] && { log "ERROR" "❌ Credenciais AWS não encontradas em $ACCESS_PATH"; return 1; }
 
-      CLEAN_JSON="$(echo "$ACCESS_RAW" | parse_maybe_escaped_json)"
+      CLEAN_JSON="$(echo "$ACCESS_RAW" | jq -r 'fromjson? // .')"
       export AWS_ACCESS_KEY_ID="$(echo "$CLEAN_JSON" | jq -r '.AWS_ACCESS_KEY_ID // empty')"
       export AWS_SECRET_ACCESS_KEY="$(echo "$CLEAN_JSON" | jq -r '.AWS_SECRET_ACCESS_KEY // empty')"
       export AWS_SESSION_TOKEN="$(echo "$CLEAN_JSON" | jq -r '.AWS_SESSION_TOKEN // empty')"
@@ -98,7 +84,7 @@ authenticate() {
       CREDS_RAW="$(get_ssm_value "$CREDS_PATH")"
       [[ -z "$CREDS_RAW" ]] && { log "ERROR" "❌ Credenciais Azure não encontradas em $CREDS_PATH"; return 1; }
 
-      CLEAN_JSON="$(echo "$CREDS_RAW" | parse_maybe_escaped_json)"
+      CLEAN_JSON="$(echo "$CREDS_RAW" | jq -r 'fromjson? // .')"
       export AZURE_TENANT_ID="$(echo "$CLEAN_JSON" | jq -r '.AZURE_TENANT_ID')"
       export AZURE_CLIENT_ID="$(echo "$CLEAN_JSON" | jq -r '.AZURE_CLIENT_ID')"
       export AZURE_CLIENT_SECRET="$(echo "$CLEAN_JSON" | jq -r '.AZURE_CLIENT_SECRET')"
@@ -117,59 +103,86 @@ authenticate() {
       CREDS_PATH_BASE="/clients/$CLIENT_NAME/gcp"
       log "DEBUG" "📚 Base SSM para GCP: $CREDS_PATH_BASE"
 
-      PROJECTS=$(aws_cli ssm describe-parameters \
-        --parameter-filters "Key=Name,Option=BeginsWith,Values=$CREDS_PATH_BASE/" \
+      # Filtro apenas do projeto informado (ACCOUNT_ID)
+      FILTERED_PARAM=$(aws_cli ssm describe-parameters \
+        --parameter-filters "Key=Name,Option=BeginsWith,Values=$CREDS_PATH_BASE/$ACCOUNT_ID/" \
         --query "Parameters[?contains(Name, '/credentials/access')].Name" \
-        --output text | tr '\t' '\n' | sort -u)
+        --output text | tr '\t' '\n' | head -n 1)
 
-      if [[ -z "$PROJECTS" ]]; then
-        log "ERROR" "❌ Nenhum projeto GCP encontrado em $CREDS_PATH_BASE."
+      if [[ -z "$FILTERED_PARAM" ]]; then
+        log "ERROR" "❌ Nenhum parâmetro encontrado para o projeto $ACCOUNT_ID."
         return 1
       fi
 
-      for PARAM in $PROJECTS; do
-        PROJECT_ID=$(echo "$PARAM" | awk -F'/' '{print $(NF-2)}')
-        ACCOUNT_ID="$PROJECT_ID" # contexto para log
-        log "INFO" "🧩 Projeto GCP detectado: $PROJECT_ID"
+      PROJECT_ID="$ACCOUNT_ID"
+      PARAM="$FILTERED_PARAM"
+      log "INFO" "🧩 Projeto GCP detectado: $PROJECT_ID"
 
-        CREDS_RAW="$(aws_cli ssm get-parameter --with-decryption \
-          --name "$PARAM" --query "Parameter.Value" --output text 2>/dev/null || true)"
-        [[ -z "$CREDS_RAW" ]] && { log "ERROR" "❌ Credenciais GCP não encontradas em $PARAM"; continue; }
+      CREDS_RAW="$(aws_cli ssm get-parameter --with-decryption --name "$PARAM" \
+        --query "Parameter.Value" --output text 2>/dev/null || true)"
 
-        CLEAN_JSON="$(echo "$CREDS_RAW" | jq -r 'fromjson? // .')"
-        TMP_KEY="/tmp/gcp-${PROJECT_ID}.json"
-        echo "$CLEAN_JSON" > "$TMP_KEY"
-        export GOOGLE_APPLICATION_CREDENTIALS="$TMP_KEY"
+      [[ -z "$CREDS_RAW" ]] && { log "ERROR" "❌ Credenciais GCP não encontradas em $PARAM"; return 1; }
 
-        log "INFO" "🔐 Ativando Service Account para $PROJECT_ID..."
-        if gcloud auth activate-service-account --key-file="$TMP_KEY" --quiet; then
-          gcloud config set project "$PROJECT_ID" --quiet
-          log "INFO" "✅ Autenticação GCP bem-sucedida para $PROJECT_ID"
+      # ============================================================
+      # 🧩 Correção robusta de credenciais GCP escapadas
+      # ============================================================
+      RAW_VALUE="$CREDS_RAW"
+      CLEAN_JSON=""
+
+      if echo "$RAW_VALUE" | grep -q '^{\\\"'; then
+        CLEAN_JSON="$(echo "$RAW_VALUE" | sed 's/^"//' | sed 's/"$//' | jq -r 'fromjson')"
+      elif echo "$RAW_VALUE" | grep -q '{\"'; then
+        CLEAN_JSON="$(echo "$RAW_VALUE" | jq -r 'fromjson? // .')"
+      else
+        if echo "$RAW_VALUE" | jq empty >/dev/null 2>&1; then
+          CLEAN_JSON="$RAW_VALUE"
         else
-          log "ERROR" "❌ Falha na autenticação GCP ($PROJECT_ID)."
-          continue
+          if echo "$RAW_VALUE" | base64 --decode >/dev/null 2>&1; then
+            CLEAN_JSON="$(echo "$RAW_VALUE" | base64 --decode)"
+          else
+            CLEAN_JSON="$RAW_VALUE"
+          fi
         fi
+      fi
 
-        if gcloud asset list --project "$PROJECT_ID" --limit=1 --quiet >/dev/null 2>&1; then
-          log "DEBUG" "📊 Acesso validado para $PROJECT_ID"
-        else
-          log "WARN" "⚠️ SA autenticada mas sem acesso total em $PROJECT_ID"
-        fi
+      if ! echo "$CLEAN_JSON" | jq empty >/dev/null 2>&1; then
+        log "ERROR" "❌ Credenciais GCP inválidas ou corrompidas para $PROJECT_ID."
+        return 1
+      fi
 
-        log "INFO" "▶️ Executando Prowler GCP para $PROJECT_ID..."
-        if prowler gcp \
-            --project-id "$PROJECT_ID" \
-            -M json-asff \
-            --output-filename "prowler-gcp-${PROJECT_ID}.json" \
-            --output-directory "$OUTPUT_DIR" \
-            --skip-api-check \
-            --no-banner \
-            --log-level INFO; then
-          log "INFO" "✅ Scan concluído para $PROJECT_ID"
-        else
-          log "WARN" "⚠️ Falha parcial no scan de $PROJECT_ID"
-        fi
-      done
+      TMP_KEY="/tmp/gcp-${PROJECT_ID}.json"
+      echo "$CLEAN_JSON" > "$TMP_KEY"
+      export GOOGLE_APPLICATION_CREDENTIALS="$TMP_KEY"
+      log "DEBUG" "💾 Credenciais GCP salvas em $TMP_KEY ($(wc -c < "$TMP_KEY") bytes)"
+
+      log "INFO" "🔐 Ativando Service Account para $PROJECT_ID..."
+      if gcloud auth activate-service-account --key-file="$TMP_KEY" --quiet; then
+        gcloud config set project "$PROJECT_ID" --quiet
+        log "INFO" "✅ Autenticação GCP bem-sucedida para $PROJECT_ID"
+      else
+        log "ERROR" "❌ Falha na autenticação GCP ($PROJECT_ID)."
+        return 1
+      fi
+
+      if gcloud asset list --project "$PROJECT_ID" --limit=1 --quiet >/dev/null 2>&1; then
+        log "DEBUG" "📊 Acesso validado para $PROJECT_ID"
+      else
+        log "WARN" "⚠️ SA autenticada mas sem acesso total em $PROJECT_ID"
+      fi
+
+      log "INFO" "▶️ Executando Prowler GCP para $PROJECT_ID..."
+      if prowler gcp \
+          --project-id "$PROJECT_ID" \
+          -M json-asff \
+          --output-filename "prowler-gcp-${PROJECT_ID}.json" \
+          --output-directory "$OUTPUT_DIR" \
+          --skip-api-check \
+          --no-banner \
+          --log-level INFO; then
+        log "INFO" "✅ Scan concluído para $PROJECT_ID"
+      else
+        log "WARN" "⚠️ Falha parcial no scan de $PROJECT_ID"
+      fi
       ;;
   esac
 }
