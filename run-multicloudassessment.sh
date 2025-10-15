@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.0
+# MultiCloud Security Assessment Runner v4.1.1
 # Autor: Wagner Azevedo
 # Alterações nesta versão:
 #   - GCP não requer mais AWS_REGION nem chamadas AWS no path
@@ -103,16 +103,16 @@ authenticate() {
       fi
       ;;
 
-    gcp)
+        gcp)
       log "[INFO] 🌍 Iniciando autenticação GCP..."
       CREDS_PATH_BASE="/clients/$CLIENT_NAME/gcp"
       log "[DEBUG] 📚 Base SSM para GCP: $CREDS_PATH_BASE"
 
-      # Usa AWS CLI apenas para buscar os parâmetros, não requer AWS_REGION para autenticar no GCP
-      PROJECTS=$(aws ssm get-parameters-by-path \
+      PROJECTS=$(aws ssm describe-parameters \
         --region "$AWS_REGION" \
-        --path "$CREDS_PATH_BASE" --recursive \
-        --query "Parameters[].Name" --output text | grep "/credentials/access" || true)
+        --parameter-filters "Key=Name,Option=BeginsWith,Values=$CREDS_PATH_BASE/" \
+        --query "Parameters[?contains(Name, '/credentials/access')].Name" \
+        --output text | tr '\t' '\n' | sort -u)
 
       if [[ -z "$PROJECTS" ]]; then
         log "[ERROR] ❌ Nenhum projeto GCP encontrado em $CREDS_PATH_BASE."
@@ -130,7 +130,7 @@ authenticate() {
           continue
         fi
 
-        CLEAN_JSON="$(echo "$CREDS_RAW" | parse_maybe_escaped_json)"
+        CLEAN_JSON="$(echo "$CREDS_RAW" | jq -r 'fromjson? // .')"
         echo "$CLEAN_JSON" > /tmp/gcp_creds.json
         export GOOGLE_APPLICATION_CREDENTIALS="/tmp/gcp_creds.json"
 
@@ -143,26 +143,25 @@ authenticate() {
           continue
         fi
 
-        # Teste de acesso
+        # Teste de acesso (asset list)
         if gcloud asset list --project "$PROJECT_ID" --limit=1 >/dev/null 2>&1; then
           log "[DEBUG] 📊 Acesso validado para $PROJECT_ID"
         else
           log "[WARN] ⚠️ SA autenticada mas sem acesso total em $PROJECT_ID"
         fi
 
-        # Executa o Prowler GCP (não usa região AWS)
+        # Executa Prowler GCP
         log "[INFO] ▶️ Executando Prowler GCP para $PROJECT_ID..."
-        prowler gcp -M json-asff \
-          --project "$PROJECT_ID" \
+        prowler gcp \
+          --project-id "$PROJECT_ID" \
+          -M json-asff \
           --output-filename "prowler-gcp-${PROJECT_ID}.json" \
-          --output-directory "$OUTPUT_DIR" || log "[WARN] ⚠️ Falha parcial no scan de $PROJECT_ID"
+          --output-directory "$OUTPUT_DIR" \
+          --no-banner \
+          || log "[WARN] ⚠️ Falha parcial no scan de $PROJECT_ID"
       done
       ;;
 
-    *)
-      log "[ERROR] ❌ Provedor de nuvem não suportado: $CLOUD_PROVIDER"
-      return 1
-      ;;
   esac
 }
 
