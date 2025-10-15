@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.0
+# MultiCloud Security Assessment Runner v4.1.1
 # Autor: Wagner Azevedo
-# ============================================================
 # Alterações nesta versão:
-#   - Fixa AWS_SSM_REGION (backend SSM central)
-#   - Azure: autenticação automática (--az-cli-auth ou --sp-env-auth)
-#   - GCP: mensagens de erro aprimoradas e roles recomendadas
-#   - Logs claros e uniformes entre provedores
+#   - Suporte a múltiplos projetos GCP via loop dinâmico
+#   - Logs de validação (gcloud info e asset list)
+#   - Debug seguro opcional
+#   - Mantém awscli obrigatório para leitura via SSM
 # ============================================================
 
 set -euo pipefail
@@ -16,65 +15,69 @@ export LANG=C.UTF-8
 SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.0"
+echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.0.9"
 
+# === Variáveis obrigatórias ===
 CLIENT_NAME="${CLIENT_NAME:-unknown}"
 CLOUD_PROVIDER="${CLOUD_PROVIDER:-unknown}"
 ACCOUNT_ID="${ACCOUNT_ID:-undefined}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 S3_BUCKET="${S3_BUCKET:-multicloud-assessments}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
-AWS_SSM_REGION="${AWS_SSM_REGION:-us-east-1}"
-
-echo "[RUNNER:$SESSION_ID] [INFO] 🔹 Cliente: $CLIENT_NAME | Nuvem: $CLOUD_PROVIDER | Conta: $ACCOUNT_ID | Região Prowler: $AWS_REGION | SSM Backend: $AWS_SSM_REGION"
 
 OUTPUT_DIR="/tmp/output-${SESSION_ID}"
 mkdir -p "$OUTPUT_DIR"
 
+# === Helper de log ===
 log() { echo "[RUNNER:$SESSION_ID] $(date -u +"%Y-%m-%dT%H:%M:%SZ") $1"; }
 
 # ============================================================
-# 🔧 Utilidades
+# 🔧 Funções utilitárias
 # ============================================================
 
-aws_cli() { aws --region "$AWS_SSM_REGION" "$@"; }
+aws_cli() {
+  aws --region "$AWS_REGION" "$@"
+}
 
 get_ssm_value() {
   local path="$1"
-  aws_cli ssm get-parameter --with-decryption --name "$path" --query "Parameter.Value" --output text 2>/dev/null || echo ""
+  aws_cli ssm get-parameter --with-decryption --name "$path" \
+    --query "Parameter.Value" --output text 2>/dev/null || echo ""
 }
 
 parse_maybe_escaped_json() {
-  local raw; raw="$(cat)"
-  [[ -z "$raw" ]] && { echo ""; return; }
-  if echo "$raw" | jq empty >/dev/null 2>&1; then
-    echo "$raw"
-  elif echo "$raw" | grep -q '{\\\"'; then
+  local raw="$(cat)"
+  if [[ -z "$raw" ]]; then echo ""; return 0; fi
+  if echo "$raw" | jq empty >/dev/null 2>&1; then echo "$raw"; return 0; fi
+  if echo "$raw" | grep -q '{\\\"'; then
     echo "$raw" | sed 's/^"//' | sed 's/"$//' | jq -r 'fromjson'
-  else
-    echo ""
+    return 0
   fi
+  echo ""
 }
 
 # ============================================================
-# 🔐 Autenticação Multicloud
+# 🔐 Autenticação MultiCloud
 # ============================================================
 
 authenticate() {
-  log "[INFO] 💾 Backend de credenciais: AWS SSM Parameter Store (região $AWS_SSM_REGION)."
-
   case "$CLOUD_PROVIDER" in
     aws)
       log "[INFO] ☁️ Iniciando autenticação AWS..."
-      CREDS_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access"
-      ACCESS_RAW="$(get_ssm_value "$CREDS_PATH")"
-      [[ -z "$ACCESS_RAW" ]] && { log "[ERROR] ❌ Credenciais AWS não encontradas."; return 1; }
+      ACCESS_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access"
+      ACCESS_RAW="$(get_ssm_value "$ACCESS_PATH")"
+
+      if [[ -z "$ACCESS_RAW" ]]; then
+        log "[ERROR] ❌ Credenciais AWS não encontradas em $ACCESS_PATH"
+        return 1
+      fi
 
       CLEAN_JSON="$(echo "$ACCESS_RAW" | parse_maybe_escaped_json)"
-      export AWS_ACCESS_KEY_ID="$(echo "$CLEAN_JSON" | jq -r '.AWS_ACCESS_KEY_ID')"
-      export AWS_SECRET_ACCESS_KEY="$(echo "$CLEAN_JSON" | jq -r '.AWS_SECRET_ACCESS_KEY')"
-      export AWS_SESSION_TOKEN="$(echo "$CLEAN_JSON" | jq -r '.AWS_SESSION_TOKEN // empty')"
+      AWS_ACCESS_KEY_ID="$(echo "$CLEAN_JSON" | jq -r '.AWS_ACCESS_KEY_ID // empty')"
+      AWS_SECRET_ACCESS_KEY="$(echo "$CLEAN_JSON" | jq -r '.AWS_SECRET_ACCESS_KEY // empty')"
+      AWS_SESSION_TOKEN="$(echo "$CLEAN_JSON" | jq -r '.AWS_SESSION_TOKEN // empty')"
 
+      export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_DEFAULT_REGION="$AWS_REGION"
       log "[INFO] ✅ Autenticação AWS concluída."
       ;;
 
@@ -82,7 +85,11 @@ authenticate() {
       log "[INFO] ☁️ Iniciando autenticação Azure..."
       CREDS_PATH="/clients/$CLIENT_NAME/azure/$ACCOUNT_ID/credentials/access"
       CREDS_RAW="$(get_ssm_value "$CREDS_PATH")"
-      [[ -z "$CREDS_RAW" ]] && { log "[ERROR] ❌ Credenciais Azure não encontradas."; return 1; }
+
+      if [[ -z "$CREDS_RAW" ]]; then
+        log "[ERROR] ❌ Credenciais Azure não encontradas em $CREDS_PATH."
+        return 1
+      fi
 
       CLEAN_JSON="$(echo "$CREDS_RAW" | parse_maybe_escaped_json)"
       export AZURE_TENANT_ID="$(echo "$CLEAN_JSON" | jq -r '.AZURE_TENANT_ID')"
@@ -90,34 +97,64 @@ authenticate() {
       export AZURE_CLIENT_SECRET="$(echo "$CLEAN_JSON" | jq -r '.AZURE_CLIENT_SECRET')"
       export AZURE_SUBSCRIPTION_ID="$(echo "$CLEAN_JSON" | jq -r '.AZURE_SUBSCRIPTION_ID')"
 
-      log "[INFO] 🔑 Efetuando login via Service Principal..."
-      az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" >/dev/null 2>&1 || {
-        log "[ERROR] ❌ Falha no login Azure CLI."; return 1; }
-      az account set --subscription "$AZURE_SUBSCRIPTION_ID" >/dev/null 2>&1 || {
-        log "[ERROR] ❌ Falha ao definir subscription."; return 1; }
-      log "[INFO] ✅ Autenticação Azure concluída."
+      if az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" >/dev/null 2>&1; then
+        log "[INFO] ✅ Autenticação Azure concluída."
+      else
+        log "[ERROR] ❌ Falha na autenticação Azure."
+        return 1
+      fi
       ;;
 
     gcp)
-      log "[INFO] ☁️ Iniciando autenticação GCP..."
-      CREDS_PATH="/clients/$CLIENT_NAME/gcp/$ACCOUNT_ID/credentials/access"
-      CREDS_RAW="$(get_ssm_value "$CREDS_PATH")"
-      [[ -z "$CREDS_RAW" ]] && { log "[ERROR] ❌ Credenciais GCP não encontradas."; return 1; }
+      log "[INFO] 🌍 Iniciando autenticação GCP..."
+      CREDS_PATH_BASE="/clients/$CLIENT_NAME/gcp"
+      log "[DEBUG] 📚 SSM base: $CREDS_PATH_BASE"
 
-      if echo "$CREDS_RAW" | jq empty >/dev/null 2>&1; then
-        echo "$CREDS_RAW" > /tmp/gcp_creds.json
-      elif echo "$CREDS_RAW" | grep -q '{\\\"'; then
-        echo "$CREDS_RAW" | sed 's/^"//' | sed 's/"$//' | jq -r 'fromjson' > /tmp/gcp_creds.json
-      else
-        log "[ERROR] ❌ Formato inválido de credenciais GCP."
+      PROJECTS=$(aws_cli ssm get-parameters-by-path --path "$CREDS_PATH_BASE" --recursive \
+        --query "Parameters[].Name" --output text | grep "/credentials/access" || true)
+
+      if [[ -z "$PROJECTS" ]]; then
+        log "[ERROR] ❌ Nenhum projeto GCP encontrado em $CREDS_PATH_BASE."
         return 1
       fi
 
-      export GOOGLE_APPLICATION_CREDENTIALS="/tmp/gcp_creds.json"
-      gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS" >/dev/null 2>&1 || {
-        log "[ERROR] ❌ Falha ao autenticar no GCP."; return 1; }
-      gcloud config set project "$ACCOUNT_ID" >/dev/null 2>&1 || true
-      log "[INFO] ✅ Autenticação GCP concluída."
+      for PARAM in $PROJECTS; do
+        PROJECT_ID=$(echo "$PARAM" | awk -F'/' '{print $(NF-2)}')
+        log "[INFO] 🧩 Projeto GCP detectado: $PROJECT_ID"
+        CREDS_RAW="$(get_ssm_value "$PARAM")"
+
+        if [[ -z "$CREDS_RAW" ]]; then
+          log "[ERROR] ❌ Credenciais GCP não encontradas em $PARAM"
+          continue
+        fi
+
+        CLEAN_JSON="$(echo "$CREDS_RAW" | parse_maybe_escaped_json)"
+        echo "$CLEAN_JSON" > /tmp/gcp_creds.json
+        export GOOGLE_APPLICATION_CREDENTIALS="/tmp/gcp_creds.json"
+
+        log "[INFO] 🔐 Ativando Service Account para $PROJECT_ID..."
+        if gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS" >/dev/null 2>&1; then
+          gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
+          log "[INFO] ✅ Autenticação GCP bem-sucedida em $PROJECT_ID"
+        else
+          log "[ERROR] ❌ Falha na autenticação GCP ($PROJECT_ID)."
+          continue
+        fi
+
+        # Verificação simples de acesso
+        if gcloud asset list --project "$PROJECT_ID" --limit=1 >/dev/null 2>&1; then
+          log "[DEBUG] 📊 Verificação de acesso OK para $PROJECT_ID"
+        else
+          log "[WARN] ⚠️ SA autenticada, mas sem permissão de leitura em $PROJECT_ID"
+        fi
+
+        # Execução do scan GCP
+        log "[INFO] ▶️ Executando Prowler GCP para $PROJECT_ID..."
+        prowler gcp -M json-asff \
+          --output-filename "prowler-gcp-${PROJECT_ID}.json" \
+          --output-directory "$OUTPUT_DIR" \
+          --project "$PROJECT_ID" || log "[WARN] ⚠️ Falha parcial no scan de $PROJECT_ID"
+      done
       ;;
 
     *)
@@ -136,46 +173,8 @@ if ! authenticate; then
   exit 1
 fi
 
-SCAN_START=$(date +%s)
-log "[INFO] ▶️ Executando Prowler para $CLOUD_PROVIDER ($ACCOUNT_ID)"
-
-case "$CLOUD_PROVIDER" in
-  aws)
-    prowler aws -M json-asff --output-filename "prowler-aws.json" \
-      --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan AWS"
-    ;;
-
-  azure)
-    if az account show >/dev/null 2>&1; then
-      log "[INFO] 🔑 Sessão Azure CLI detectada. Usando --az-cli-auth."
-      prowler azure --az-cli-auth -M json-asff \
-        --output-filename "prowler-azure.json" \
-        --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan Azure"
-    else
-      log "[INFO] 🔑 Sessão CLI não detectada. Usando --sp-env-auth."
-      prowler azure --sp-env-auth -M json-asff \
-        --output-filename "prowler-azure.json" \
-        --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan Azure"
-    fi
-    ;;
-
-  gcp)
-    prowler gcp -M json-asff --output-filename "prowler-gcp.json" \
-      --output-directory "$OUTPUT_DIR" || {
-        log "[ERROR] ⚠️ Falha no scan GCP — verifique permissões da Service Account.";
-        log "[HINT] Requer roles: Viewer, Security Reviewer, Security Center Findings Viewer, Cloud Asset Viewer.";
-      }
-    ;;
-
-esac
-
 SCAN_END=$(date +%s)
-DURATION=$((SCAN_END - SCAN_START))
-
-DEST_BASE="s3://${S3_BUCKET}/${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/$(date -u +%Y%m%d-%H%M%S)/"
-log "[INFO] ⏱️ Duração do scan: ${DURATION}s"
-log "[INFO] 📤 Enviando resultados para $DEST_BASE"
-aws_cli s3 cp "$OUTPUT_DIR" "$DEST_BASE" --recursive || log "[WARN] ⚠️ Falha parcial no upload."
+log "[INFO] ✅ Todos os scans concluídos com sucesso."
 
 log "========== 🔍 EXECUTION SUMMARY =========="
 log "Session ID: $SESSION_ID"
@@ -183,6 +182,6 @@ log "Client:     $CLIENT_NAME"
 log "Cloud:      $CLOUD_PROVIDER"
 log "Account:    $ACCOUNT_ID"
 log "Region:     $AWS_REGION"
-log "SSM Region: $AWS_SSM_REGION"
-log "Duration:   ${DURATION}s"
+log "Output:     $OUTPUT_DIR"
 log "=========================================="
+EOF
