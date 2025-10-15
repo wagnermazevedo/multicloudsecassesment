@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
 # MultiCloud Security Assessment Runner v4.1.6
-# Autor: Wagner Azevedo
+# Autor: Wagner Azevedo (ajustes por assistente)
 # Alterações nesta versão:
-#   - Inclusão de parâmetros automáticos de compliance e formatos de saída
-#     baseados no provedor (AWS / Azure / GCP)
-#   - Mantida lógica robusta de autenticação e upload S3
-#   - Garante consistência entre relatórios e estrutura de diretórios
+#   - Corrige unbound variable em parsing de argumentos
+#   - Define compliance/output-formats por provedor (AWS/Azure/GCP)
+#   - Prefixo dos relatórios alterado para multicloudassessment-*
+#   - Upload automático para S3 e logs aprimorados
 # ============================================================
 
 set -euo pipefail
@@ -18,10 +18,15 @@ START_TS=$(date +%s)
 
 echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.6"
 
-# === Variáveis obrigatórias ===
+# -------------------------
+# Protege contra "unbound variable" apenas durante parsing de args
+# -------------------------
+set +u
 CLIENT_NAME="${CLIENT_NAME:-${1:-unknown}}"
 CLOUD_PROVIDER="${CLOUD_PROVIDER:-${2:-unknown}}"
 ACCOUNT_ID="${ACCOUNT_ID:-${3:-undefined}}"
+set -u
+
 AWS_REGION="${AWS_REGION:-us-east-1}" # Só usada para AWS/SSM
 S3_BUCKET="${S3_BUCKET:-multicloud-assessments}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
@@ -47,7 +52,6 @@ log() {
 # ============================================================
 # 🔧 Utilitários AWS
 # ============================================================
-
 aws_cli() {
   aws --region "$AWS_REGION" "$@"
 }
@@ -59,11 +63,10 @@ get_ssm_value() {
 }
 
 # ============================================================
-# 🔐 Autenticação MultiCloud
+# 🔐 Autenticação MultiCloud e execução Prowler com configurações por provider
 # ============================================================
-
-authenticate() {
-  case "$CLOUD_PROVIDER" in
+authenticate_and_scan() {
+  case "${CLOUD_PROVIDER,,}" in
     aws)
       log "INFO" "☁️ Iniciando autenticação AWS..."
       ACCESS_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access"
@@ -77,17 +80,22 @@ authenticate() {
       export AWS_DEFAULT_REGION="$AWS_REGION"
       log "INFO" "✅ Autenticação AWS concluída."
 
-      log "INFO" "▶️ Executando Prowler AWS para $ACCOUNT_ID..."
+      # Compliance e formatos para AWS (conforme especificado)
+      AWS_COMPLIANCE="aws_well_architected_framework_reliability_pillar_aws aws_well_architected_framework_security_pillar_aws iso27001_2022_aws mitre_attack_aws nist_800_53_revision_5_aws prowler_threatscore_aws soc2_aws"
+      OUTPUT_FORMATS="csv html json-asff"
+
+      OUT_PREFIX="multicloudassessment-aws-${ACCOUNT_ID}"
+      log "INFO" "▶️ Executando Prowler (AWS) para account ${ACCOUNT_ID}..."
       if prowler aws \
-          --compliance aws_well_architected_framework_reliability_pillar_aws aws_well_architected_framework_security_pillar_aws iso27001_2022_aws mitre_attack_aws nist_800_53_revision_5_aws prowler_threatscore_aws soc2_aws \
-          --output-formats csv html json-asff \
-          --output-filename "prowler-aws-${ACCOUNT_ID}" \
+          --compliance ${AWS_COMPLIANCE} \
+          --output-formats ${OUTPUT_FORMATS} \
+          --output-filename "${OUT_PREFIX}" \
           --output-directory "$OUTPUT_DIR" \
           --no-banner \
-          --log-level "$LOG_LEVEL"; then
-        log "INFO" "✅ Scan AWS concluído para $ACCOUNT_ID"
+          --log-level INFO; then
+        log "INFO" "✅ Scan concluído para AWS/$ACCOUNT_ID"
       else
-        log "WARN" "⚠️ Falha parcial no scan AWS ($ACCOUNT_ID)"
+        log "WARN" "⚠️ Falha parcial no scan AWS/$ACCOUNT_ID"
       fi
       ;;
 
@@ -110,18 +118,22 @@ authenticate() {
         return 1
       fi
 
-      log "INFO" "▶️ Executando Prowler Azure para $ACCOUNT_ID..."
+      # Compliance e formatos para Azure (conforme especificado)
+      AZURE_COMPLIANCE="cis_4.0_azure iso27001_2022_azure mitre_attack_azure prowler_threatscore_azure soc2_azure"
+      OUTPUT_FORMATS="csv html json-asff"
+
+      OUT_PREFIX="multicloudassessment-azure-${ACCOUNT_ID}"
+      log "INFO" "▶️ Executando Prowler (Azure) para subscription ${AZURE_SUBSCRIPTION_ID:-$ACCOUNT_ID}..."
       if prowler azure \
-          --subscription-id "$AZURE_SUBSCRIPTION_ID" \
-          --compliance cis_4.0_azure iso27001_2022_azure mitre_attack_azure prowler_threatscore_azure soc2_azure \
-          --output-formats csv html json-asff \
-          --output-filename "prowler-azure-${ACCOUNT_ID}" \
+          --compliance ${AZURE_COMPLIANCE} \
+          --output-formats ${OUTPUT_FORMATS} \
+          --output-filename "${OUT_PREFIX}" \
           --output-directory "$OUTPUT_DIR" \
           --no-banner \
-          --log-level "$LOG_LEVEL"; then
-        log "INFO" "✅ Scan Azure concluído para $ACCOUNT_ID"
+          --log-level INFO; then
+        log "INFO" "✅ Scan concluído para Azure/$ACCOUNT_ID"
       else
-        log "WARN" "⚠️ Falha parcial no scan Azure ($ACCOUNT_ID)"
+        log "WARN" "⚠️ Falha parcial no scan Azure/$ACCOUNT_ID"
       fi
       ;;
 
@@ -148,6 +160,7 @@ authenticate() {
         --query "Parameter.Value" --output text 2>/dev/null || true)"
       [[ -z "$CREDS_RAW" ]] && { log "ERROR" "❌ Credenciais GCP não encontradas em $PARAM"; return 1; }
 
+      # Robust handling of escaped/base64 JSON service account
       RAW_VALUE="$CREDS_RAW"
       CLEAN_JSON=""
 
@@ -186,37 +199,62 @@ authenticate() {
         return 1
       fi
 
-      log "INFO" "▶️ Executando Prowler GCP para $PROJECT_ID..."
+      if gcloud asset list --project "$PROJECT_ID" --limit=1 --quiet >/dev/null 2>&1; then
+        log "DEBUG" "📊 Acesso validado para $PROJECT_ID"
+      else
+        log "WARN" "⚠️ SA autenticada mas sem acesso total em $PROJECT_ID"
+      fi
+
+      # Compliance e formatos para GCP (conforme especificado)
+      GCP_COMPLIANCE="cis_4.0_gcp iso27001_2022_gcp mitre_attack_gcp prowler_threatscore_gcp soc2_gcp"
+      OUTPUT_FORMATS="csv html json-asff"
+
+      OUT_PREFIX="multicloudassessment-gcp-${PROJECT_ID}"
+      log "INFO" "▶️ Executando Prowler (GCP) para project ${PROJECT_ID}..."
       if prowler gcp \
           --project-id "$PROJECT_ID" \
-          --compliance cis_4.0_gcp iso27001_2022_gcp mitre_attack_gcp prowler_threatscore_gcp soc2_gcp \
-          --output-formats csv html json-asff \
-          --output-filename "prowler-gcp-${PROJECT_ID}" \
+          --compliance ${GCP_COMPLIANCE} \
+          --output-formats ${OUTPUT_FORMATS} \
+          --output-filename "${OUT_PREFIX}" \
           --output-directory "$OUTPUT_DIR" \
           --skip-api-check \
           --no-banner \
-          --log-level "$LOG_LEVEL"; then
-        log "INFO" "✅ Scan GCP concluído para $PROJECT_ID"
+          --log-level INFO; then
+        log "INFO" "✅ Scan concluído para GCP/$PROJECT_ID"
       else
         log "WARN" "⚠️ Falha parcial no scan de $PROJECT_ID"
       fi
+
+      # remove key file for segurança (opcional)
+      rm -f "$TMP_KEY" || true
+      ;;
+
+    *)
+      log "ERROR" "❌ Cloud provider desconhecido: $CLOUD_PROVIDER"
+      return 1
       ;;
   esac
+
+  return 0
 }
 
 # ============================================================
 # 🚀 Execução principal
 # ============================================================
-
-if ! authenticate; then
-  log "ERROR" "⚠️ Falha na autenticação. Encerrando execução."
+if ! authenticate_and_scan; then
+  log "ERROR" "⚠️ Falha na autenticação / scan. Encerrando execução."
   exit 1
 fi
 
-# Upload automático para S3
+# Preparar upload para S3 (escolha de prefixo e timestamp)
 TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
 S3_PATH="s3://${S3_BUCKET}/${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/${TIMESTAMP}/"
 
+# Mostrar lista de arquivos gerados (para log)
+log "INFO" "📁 Arquivos gerados em $OUTPUT_DIR:"
+ls -alh "$OUTPUT_DIR" || true
+
+# Upload automático para S3
 if aws s3 cp "$OUTPUT_DIR" "$S3_PATH" --recursive --only-show-errors; then
   log "INFO" "☁️ Relatórios enviados com sucesso para $S3_PATH"
 else
@@ -236,3 +274,5 @@ log "INFO" "Region:     $AWS_REGION"
 log "INFO" "Output:     $OUTPUT_DIR"
 log "INFO" "S3 Path:    $S3_PATH"
 log "=========================================="
+
+exit 0
