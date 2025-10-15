@@ -19,6 +19,7 @@ CLOUD_PROVIDER=$(echo "$CLOUD_PROVIDER" | tr '[:upper:]' '[:lower:]')
 # ==============================
 # Funções utilitárias
 # ==============================
+
 install_base_deps() {
   echo "[ENTRYPOINT] ⚙️ Instalando dependências básicas..."
   apt-get update -y && \
@@ -28,11 +29,17 @@ install_base_deps() {
 
 install_aws_cli() {
   if ! command -v aws &>/dev/null; then
-    echo "[ENTRYPOINT] 📦 Instalando AWS CLI..."
+    echo "[ENTRYPOINT] 📦 Instalando AWS CLI (requerido para backend SSM)..."
     curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
     unzip -q awscliv2.zip && ./aws/install && rm -rf awscliv2.zip ./aws
+    if command -v aws &>/dev/null; then
+      echo "[ENTRYPOINT] ✅ AWS CLI instalada com sucesso: $(aws --version 2>&1)"
+    else
+      echo "[ENTRYPOINT] ❌ Falha ao instalar AWS CLI. Abortando."
+      exit 1
+    fi
   else
-    echo "[ENTRYPOINT] ✅ AWS CLI já instalada."
+    echo "[ENTRYPOINT] ✅ AWS CLI já instalada: $(aws --version 2>&1)"
   fi
 }
 
@@ -41,7 +48,7 @@ install_azure_cli() {
     echo "[ENTRYPOINT] 📦 Instalando Azure CLI..."
     curl -sL https://aka.ms/InstallAzureCLIDeb | bash
   else
-    echo "[ENTRYPOINT] ✅ Azure CLI já instalada."
+    echo "[ENTRYPOINT] ✅ Azure CLI já instalada: $(az version 2>/dev/null | head -n 1 || echo 'detected')"
   fi
 }
 
@@ -52,8 +59,9 @@ install_gcloud() {
       > /etc/apt/sources.list.d/google-cloud-sdk.list
     curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
     apt-get update -y && apt-get install -y --no-install-recommends google-cloud-cli && rm -rf /var/lib/apt/lists/*
+    echo "[ENTRYPOINT] ✅ Google Cloud SDK instalado: $(gcloud version | head -n 1)"
   else
-    echo "[ENTRYPOINT] ✅ Google Cloud SDK já instalado."
+    echo "[ENTRYPOINT] ✅ Google Cloud SDK já instalado: $(gcloud version | head -n 1)"
   fi
 }
 
@@ -73,10 +81,12 @@ configure_virtualenv_path() {
 # ==============================
 main() {
   install_base_deps
+  install_aws_cli   # AWS CLI é obrigatória para todas as clouds (SSM backend)
 
+  # Dependências específicas por cloud (além da AWS CLI)
   case "$CLOUD_PROVIDER" in
     aws)
-      install_aws_cli
+      echo "[ENTRYPOINT] 🌩️ Ambiente AWS selecionado — apenas AWS CLI necessária."
       ;;
     azure)
       install_azure_cli
