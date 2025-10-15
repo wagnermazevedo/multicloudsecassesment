@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.1
+# MultiCloud Security Assessment Runner v4.1.0
 # Autor: Wagner Azevedo
 # Alterações nesta versão:
-#   - Suporte a múltiplos projetos GCP via loop dinâmico
-#   - Logs de validação (gcloud info e asset list)
-#   - Debug seguro opcional
-#   - Mantém awscli obrigatório para leitura via SSM
+#   - GCP não requer mais AWS_REGION nem chamadas AWS no path
+#   - Ajuste de logs e comportamento em ambientes híbridos
+#   - AWS/SSM e S3 continuam region-aware
 # ============================================================
 
 set -euo pipefail
@@ -15,13 +14,13 @@ export LANG=C.UTF-8
 SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.0.9"
+echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.0"
 
 # === Variáveis obrigatórias ===
 CLIENT_NAME="${CLIENT_NAME:-unknown}"
 CLOUD_PROVIDER="${CLOUD_PROVIDER:-unknown}"
 ACCOUNT_ID="${ACCOUNT_ID:-undefined}"
-AWS_REGION="${AWS_REGION:-us-east-1}"
+AWS_REGION="${AWS_REGION:-us-east-1}" # Só usada para AWS/SSM
 S3_BUCKET="${S3_BUCKET:-multicloud-assessments}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 
@@ -32,7 +31,7 @@ mkdir -p "$OUTPUT_DIR"
 log() { echo "[RUNNER:$SESSION_ID] $(date -u +"%Y-%m-%dT%H:%M:%SZ") $1"; }
 
 # ============================================================
-# 🔧 Funções utilitárias
+# 🔧 Utilitários AWS
 # ============================================================
 
 aws_cli() {
@@ -66,18 +65,17 @@ authenticate() {
       log "[INFO] ☁️ Iniciando autenticação AWS..."
       ACCESS_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access"
       ACCESS_RAW="$(get_ssm_value "$ACCESS_PATH")"
-
       if [[ -z "$ACCESS_RAW" ]]; then
         log "[ERROR] ❌ Credenciais AWS não encontradas em $ACCESS_PATH"
         return 1
       fi
 
       CLEAN_JSON="$(echo "$ACCESS_RAW" | parse_maybe_escaped_json)"
-      AWS_ACCESS_KEY_ID="$(echo "$CLEAN_JSON" | jq -r '.AWS_ACCESS_KEY_ID // empty')"
-      AWS_SECRET_ACCESS_KEY="$(echo "$CLEAN_JSON" | jq -r '.AWS_SECRET_ACCESS_KEY // empty')"
-      AWS_SESSION_TOKEN="$(echo "$CLEAN_JSON" | jq -r '.AWS_SESSION_TOKEN // empty')"
+      export AWS_ACCESS_KEY_ID="$(echo "$CLEAN_JSON" | jq -r '.AWS_ACCESS_KEY_ID // empty')"
+      export AWS_SECRET_ACCESS_KEY="$(echo "$CLEAN_JSON" | jq -r '.AWS_SECRET_ACCESS_KEY // empty')"
+      export AWS_SESSION_TOKEN="$(echo "$CLEAN_JSON" | jq -r '.AWS_SESSION_TOKEN // empty')"
+      export AWS_DEFAULT_REGION="$AWS_REGION"
 
-      export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_DEFAULT_REGION="$AWS_REGION"
       log "[INFO] ✅ Autenticação AWS concluída."
       ;;
 
@@ -108,9 +106,12 @@ authenticate() {
     gcp)
       log "[INFO] 🌍 Iniciando autenticação GCP..."
       CREDS_PATH_BASE="/clients/$CLIENT_NAME/gcp"
-      log "[DEBUG] 📚 SSM base: $CREDS_PATH_BASE"
+      log "[DEBUG] 📚 Base SSM para GCP: $CREDS_PATH_BASE"
 
-      PROJECTS=$(aws_cli ssm get-parameters-by-path --path "$CREDS_PATH_BASE" --recursive \
+      # Usa AWS CLI apenas para buscar os parâmetros, não requer AWS_REGION para autenticar no GCP
+      PROJECTS=$(aws ssm get-parameters-by-path \
+        --region "$AWS_REGION" \
+        --path "$CREDS_PATH_BASE" --recursive \
         --query "Parameters[].Name" --output text | grep "/credentials/access" || true)
 
       if [[ -z "$PROJECTS" ]]; then
@@ -121,8 +122,9 @@ authenticate() {
       for PARAM in $PROJECTS; do
         PROJECT_ID=$(echo "$PARAM" | awk -F'/' '{print $(NF-2)}')
         log "[INFO] 🧩 Projeto GCP detectado: $PROJECT_ID"
-        CREDS_RAW="$(get_ssm_value "$PARAM")"
 
+        CREDS_RAW="$(aws ssm get-parameter --region "$AWS_REGION" --with-decryption \
+          --name "$PARAM" --query "Parameter.Value" --output text 2>/dev/null || true)"
         if [[ -z "$CREDS_RAW" ]]; then
           log "[ERROR] ❌ Credenciais GCP não encontradas em $PARAM"
           continue
@@ -135,25 +137,25 @@ authenticate() {
         log "[INFO] 🔐 Ativando Service Account para $PROJECT_ID..."
         if gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS" >/dev/null 2>&1; then
           gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
-          log "[INFO] ✅ Autenticação GCP bem-sucedida em $PROJECT_ID"
+          log "[INFO] ✅ Autenticação GCP bem-sucedida para $PROJECT_ID"
         else
           log "[ERROR] ❌ Falha na autenticação GCP ($PROJECT_ID)."
           continue
         fi
 
-        # Verificação simples de acesso
+        # Teste de acesso
         if gcloud asset list --project "$PROJECT_ID" --limit=1 >/dev/null 2>&1; then
-          log "[DEBUG] 📊 Verificação de acesso OK para $PROJECT_ID"
+          log "[DEBUG] 📊 Acesso validado para $PROJECT_ID"
         else
-          log "[WARN] ⚠️ SA autenticada, mas sem permissão de leitura em $PROJECT_ID"
+          log "[WARN] ⚠️ SA autenticada mas sem acesso total em $PROJECT_ID"
         fi
 
-        # Execução do scan GCP
+        # Executa o Prowler GCP (não usa região AWS)
         log "[INFO] ▶️ Executando Prowler GCP para $PROJECT_ID..."
         prowler gcp -M json-asff \
+          --project "$PROJECT_ID" \
           --output-filename "prowler-gcp-${PROJECT_ID}.json" \
-          --output-directory "$OUTPUT_DIR" \
-          --project "$PROJECT_ID" || log "[WARN] ⚠️ Falha parcial no scan de $PROJECT_ID"
+          --output-directory "$OUTPUT_DIR" || log "[WARN] ⚠️ Falha parcial no scan de $PROJECT_ID"
       done
       ;;
 
@@ -184,4 +186,3 @@ log "Account:    $ACCOUNT_ID"
 log "Region:     $AWS_REGION"
 log "Output:     $OUTPUT_DIR"
 log "=========================================="
-EOF
