@@ -9,58 +9,103 @@ echo "[ENTRYPOINT] 🔹 Inicializando container em $(date -u +"%Y-%m-%dT%H:%M:%S
 required_vars=("CLIENT_NAME" "CLOUD_PROVIDER" "ACCOUNT_ID" "S3_BUCKET")
 for var in "${required_vars[@]}"; do
   if [ -z "${!var:-}" ]; then
-    read -rp "[ENTRYPOINT] Informe o valor de ${var}: " value
-    export "$var"="$value"
+    echo "[ENTRYPOINT] ⚠️ Variável ${var} ausente — usando valor padrão temporário."
+    export "$var"="undefined"
   fi
 done
 
 CLOUD_PROVIDER=$(echo "$CLOUD_PROVIDER" | tr '[:upper:]' '[:lower:]')
 
 # ==============================
-# Instalações seletivas
+# Funções utilitárias
 # ==============================
 install_base_deps() {
-  apt-get update -y && apt-get install -y --no-install-recommends jq curl unzip bash wget ca-certificates gnupg lsb-release apt-transport-https dos2unix
-  apt-get install -y --no-install-recommends uuid-runtime && 
+  echo "[ENTRYPOINT] ⚙️ Instalando dependências básicas..."
+  apt-get update -y && \
+  apt-get install -y --no-install-recommends jq curl unzip bash wget ca-certificates gnupg lsb-release apt-transport-https dos2unix uuid-runtime && \
   rm -rf /var/lib/apt/lists/*
 }
 
 install_aws_cli() {
-  echo "[ENTRYPOINT] Instalando AWS CLI..."
-  curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-  unzip -q awscliv2.zip && ./aws/install && rm -rf awscliv2.zip ./aws
+  if ! command -v aws &>/dev/null; then
+    echo "[ENTRYPOINT] 📦 Instalando AWS CLI..."
+    curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    unzip -q awscliv2.zip && ./aws/install && rm -rf awscliv2.zip ./aws
+  else
+    echo "[ENTRYPOINT] ✅ AWS CLI já instalada."
+  fi
 }
 
 install_azure_cli() {
-  echo "[ENTRYPOINT] Instalando Azure CLI..."
-  curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+  if ! command -v az &>/dev/null; then
+    echo "[ENTRYPOINT] 📦 Instalando Azure CLI..."
+    curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+  else
+    echo "[ENTRYPOINT] ✅ Azure CLI já instalada."
+  fi
 }
 
 install_gcloud() {
-  echo "[ENTRYPOINT] Instalando Google Cloud SDK..."
-  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list
-  curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
-  apt-get update -y && apt-get install -y --no-install-recommends google-cloud-cli && rm -rf /var/lib/apt/lists/*
+  if ! command -v gcloud &>/dev/null; then
+    echo "[ENTRYPOINT] 📦 Instalando Google Cloud SDK..."
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+      > /etc/apt/sources.list.d/google-cloud-sdk.list
+    curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+    apt-get update -y && apt-get install -y --no-install-recommends google-cloud-cli && rm -rf /var/lib/apt/lists/*
+  else
+    echo "[ENTRYPOINT] ✅ Google Cloud SDK já instalado."
+  fi
 }
 
 configure_virtualenv_path() {
+  local VENV_PATH
   VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -type d -name "prowler-*-py3.*" | head -n 1 || true)
-  [ -n "$VENV_PATH" ] && export PATH="$VENV_PATH/bin:$PATH"
+  if [ -n "$VENV_PATH" ]; then
+    export PATH="$VENV_PATH/bin:$PATH"
+    echo "[ENTRYPOINT] 🧠 Ambiente virtual detectado: $VENV_PATH"
+  else
+    echo "[ENTRYPOINT] ⚠️ Nenhum virtualenv detectado, usando PATH padrão."
+  fi
 }
 
+# ==============================
+# Função principal
+# ==============================
 main() {
   install_base_deps
 
   case "$CLOUD_PROVIDER" in
-    aws) install_aws_cli ;;
-    azure) install_azure_cli ;;
-    gcp) install_gcloud ;;
-    *) echo "[ENTRYPOINT] ❌ Provedor inválido: $CLOUD_PROVIDER"; exit 1 ;;
+    aws)
+      install_aws_cli
+      ;;
+    azure)
+      install_azure_cli
+      ;;
+    gcp)
+      install_gcloud
+      ;;
+    *)
+      echo "[ENTRYPOINT] ❌ Provedor inválido: $CLOUD_PROVIDER"
+      exit 1
+      ;;
   esac
 
   configure_virtualenv_path
+
   echo "[ENTRYPOINT] ✅ Ambiente preparado. Executando runner..."
-  exec /usr/local/bin/run-multicloudassessment.sh
+  if [ -x /usr/local/bin/run-multicloudassessment.sh ]; then
+    chmod +x /usr/local/bin/run-multicloudassessment.sh
+    /usr/local/bin/run-multicloudassessment.sh || {
+      echo "[ENTRYPOINT] ❌ Falha ao executar runner."
+      exit 1
+    }
+  else
+    echo "[ENTRYPOINT] ❌ Script runner não encontrado em /usr/local/bin/run-multicloudassessment.sh"
+    ls -la /usr/local/bin
+    exit 1
+  fi
+
+  echo "[ENTRYPOINT] 🏁 Execução concluída com sucesso em $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 }
 
 main "$@"
