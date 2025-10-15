@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.4
+# MultiCloud Security Assessment Runner v4.1.5
 # Autor: Wagner Azevedo
 # Alterações nesta versão:
-#   - Correção de autenticação GCP (JSON escapado / base64 / limpo)
-#   - Filtragem de projeto por ACCOUNT_ID (sem múltiplos scans)
-#   - Logs contextualizados com Client/Cloud/Account
-#   - Suporte Prowler v4 (--project-id)
-#   - Remoção de dependência de região para GCP
+#   - Correção de unbound variable em execuções sem argumentos
+#   - Upload automático dos relatórios ao S3
+#   - Logs com tempo total e caminho de armazenamento
+#   - Retenção da lógica v4.1.4 (GCP JSON robusto e filtragem por projeto)
 # ============================================================
 
 set -euo pipefail
@@ -15,13 +14,14 @@ export LANG=C.UTF-8
 
 SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+START_TS=$(date +%s)
 
-echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.4"
+echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.5"
 
 # === Variáveis obrigatórias ===
-CLIENT_NAME="${CLIENT_NAME:-unknown}"
-CLOUD_PROVIDER="${CLOUD_PROVIDER:-unknown}"
-ACCOUNT_ID="${ACCOUNT_ID:-undefined}"
+CLIENT_NAME="${CLIENT_NAME:-${1:-unknown}}"
+CLOUD_PROVIDER="${CLOUD_PROVIDER:-${2:-unknown}}"
+ACCOUNT_ID="${ACCOUNT_ID:-${3:-undefined}}"
 AWS_REGION="${AWS_REGION:-us-east-1}" # Só usada para AWS/SSM
 S3_BUCKET="${S3_BUCKET:-multicloud-assessments}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
@@ -103,7 +103,6 @@ authenticate() {
       CREDS_PATH_BASE="/clients/$CLIENT_NAME/gcp"
       log "DEBUG" "📚 Base SSM para GCP: $CREDS_PATH_BASE"
 
-      # Filtro apenas do projeto informado (ACCOUNT_ID)
       FILTERED_PARAM=$(aws_cli ssm describe-parameters \
         --parameter-filters "Key=Name,Option=BeginsWith,Values=$CREDS_PATH_BASE/$ACCOUNT_ID/" \
         --query "Parameters[?contains(Name, '/credentials/access')].Name" \
@@ -120,12 +119,8 @@ authenticate() {
 
       CREDS_RAW="$(aws_cli ssm get-parameter --with-decryption --name "$PARAM" \
         --query "Parameter.Value" --output text 2>/dev/null || true)"
-
       [[ -z "$CREDS_RAW" ]] && { log "ERROR" "❌ Credenciais GCP não encontradas em $PARAM"; return 1; }
 
-      # ============================================================
-      # 🧩 Correção robusta de credenciais GCP escapadas
-      # ============================================================
       RAW_VALUE="$CREDS_RAW"
       CLEAN_JSON=""
 
@@ -196,7 +191,20 @@ if ! authenticate; then
   exit 1
 fi
 
-log "INFO" "✅ Todos os scans concluídos com sucesso."
+# Upload automático para S3
+TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
+S3_PATH="s3://${S3_BUCKET}/${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/${TIMESTAMP}/"
+
+if aws s3 cp "$OUTPUT_DIR" "$S3_PATH" --recursive --only-show-errors; then
+  log "INFO" "☁️ Relatórios enviados com sucesso para $S3_PATH"
+else
+  log "WARN" "⚠️ Falha no upload para S3 (verifique permissões)."
+fi
+
+END_TS=$(date +%s)
+DURATION=$((END_TS - START_TS))
+log "INFO" "⏱️ Execução finalizada em ${DURATION}s."
+
 log "========== 🔍 EXECUTION SUMMARY =========="
 log "INFO" "Session ID: $SESSION_ID"
 log "INFO" "Client:     $CLIENT_NAME"
@@ -204,4 +212,5 @@ log "INFO" "Cloud:      $CLOUD_PROVIDER"
 log "INFO" "Account:    $ACCOUNT_ID"
 log "INFO" "Region:     $AWS_REGION"
 log "INFO" "Output:     $OUTPUT_DIR"
+log "INFO" "S3 Path:    $S3_PATH"
 log "=========================================="
