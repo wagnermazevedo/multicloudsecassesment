@@ -227,7 +227,18 @@ case "$CLOUD_PROVIDER" in
     prowler aws -M json-asff --output-filename "prowler-aws.json" --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan AWS"
     ;;
   azure)
-    prowler azure -M json-asff --output-filename "prowler-azure.json" --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan Azure"
+    if az account show >/dev/null 2>&1; then
+  log "[INFO] 🔑 Sessão Azure CLI detectada. Usando --az-cli-auth."
+  prowler azure --az-cli-auth -M json-asff \
+    --output-filename "prowler-azure.json" \
+    --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan Azure"
+else
+  log "[INFO] 🔑 Sessão Azure CLI não detectada. Usando --sp-env-auth."
+  prowler azure --sp-env-auth -M json-asff \
+    --output-filename "prowler-azure.json" \
+    --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan Azure"
+fi
+
     ;;
   gcp)
     prowler gcp -M json-asff --output-filename "prowler-gcp.json" --output-directory "$OUTPUT_DIR" || log "[ERROR] ⚠️ Falha no scan GCP"
