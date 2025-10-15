@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.1
+# MultiCloud Security Assessment Runner v4.1.2
 # Autor: Wagner Azevedo
 # Alterações nesta versão:
 #   - GCP não requer mais AWS_REGION nem chamadas AWS no path
@@ -28,7 +28,27 @@ OUTPUT_DIR="/tmp/output-${SESSION_ID}"
 mkdir -p "$OUTPUT_DIR"
 
 # === Helper de log ===
-log() { echo "[RUNNER:$SESSION_ID] $(date -u +"%Y-%m-%dT%H:%M:%SZ") $1"; }
+log() {
+  local LEVEL="$1"
+  local MESSAGE="$2"
+  local CONTEXT=""
+
+  # Identificação contextual
+  if [[ -n "$CLIENT_NAME" ]]; then
+    CONTEXT+="Client:$CLIENT_NAME "
+  fi
+  if [[ -n "$CLOUD_PROVIDER" ]]; then
+    CONTEXT+="Cloud:$CLOUD_PROVIDER "
+  fi
+  if [[ -n "$ACCOUNT_ID" ]]; then
+    CONTEXT+="Account:$ACCOUNT_ID "
+  fi
+
+  local TS
+  TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  echo "[RUNNER:$SESSION_ID] $TS [$LEVEL] ${CONTEXT}${MESSAGE}"
+}
+
 
 # ============================================================
 # 🔧 Utilitários AWS
