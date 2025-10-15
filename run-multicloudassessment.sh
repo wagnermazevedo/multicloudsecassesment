@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.5
+# MultiCloud Security Assessment Runner v4.1.6
 # Autor: Wagner Azevedo
 # Alterações nesta versão:
-#   - Correção de unbound variable em execuções sem argumentos
-#   - Upload automático dos relatórios ao S3
-#   - Logs com tempo total e caminho de armazenamento
-#   - Retenção da lógica v4.1.4 (GCP JSON robusto e filtragem por projeto)
+#   - Inclusão de parâmetros automáticos de compliance e formatos de saída
+#     baseados no provedor (AWS / Azure / GCP)
+#   - Mantida lógica robusta de autenticação e upload S3
+#   - Garante consistência entre relatórios e estrutura de diretórios
 # ============================================================
 
 set -euo pipefail
@@ -16,7 +16,7 @@ SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 START_TS=$(date +%s)
 
-echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.5"
+echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.6"
 
 # === Variáveis obrigatórias ===
 CLIENT_NAME="${CLIENT_NAME:-${1:-unknown}}"
@@ -76,6 +76,19 @@ authenticate() {
       export AWS_SESSION_TOKEN="$(echo "$CLEAN_JSON" | jq -r '.AWS_SESSION_TOKEN // empty')"
       export AWS_DEFAULT_REGION="$AWS_REGION"
       log "INFO" "✅ Autenticação AWS concluída."
+
+      log "INFO" "▶️ Executando Prowler AWS para $ACCOUNT_ID..."
+      if prowler aws \
+          --compliance aws_well_architected_framework_reliability_pillar_aws aws_well_architected_framework_security_pillar_aws iso27001_2022_aws mitre_attack_aws nist_800_53_revision_5_aws prowler_threatscore_aws soc2_aws \
+          --output-formats csv html json-asff \
+          --output-filename "prowler-aws-${ACCOUNT_ID}" \
+          --output-directory "$OUTPUT_DIR" \
+          --no-banner \
+          --log-level "$LOG_LEVEL"; then
+        log "INFO" "✅ Scan AWS concluído para $ACCOUNT_ID"
+      else
+        log "WARN" "⚠️ Falha parcial no scan AWS ($ACCOUNT_ID)"
+      fi
       ;;
 
     azure)
@@ -95,6 +108,20 @@ authenticate() {
       else
         log "ERROR" "❌ Falha na autenticação Azure."
         return 1
+      fi
+
+      log "INFO" "▶️ Executando Prowler Azure para $ACCOUNT_ID..."
+      if prowler azure \
+          --subscription-id "$AZURE_SUBSCRIPTION_ID" \
+          --compliance cis_4.0_azure iso27001_2022_azure mitre_attack_azure prowler_threatscore_azure soc2_azure \
+          --output-formats csv html json-asff \
+          --output-filename "prowler-azure-${ACCOUNT_ID}" \
+          --output-directory "$OUTPUT_DIR" \
+          --no-banner \
+          --log-level "$LOG_LEVEL"; then
+        log "INFO" "✅ Scan Azure concluído para $ACCOUNT_ID"
+      else
+        log "WARN" "⚠️ Falha parcial no scan Azure ($ACCOUNT_ID)"
       fi
       ;;
 
@@ -159,22 +186,17 @@ authenticate() {
         return 1
       fi
 
-      if gcloud asset list --project "$PROJECT_ID" --limit=1 --quiet >/dev/null 2>&1; then
-        log "DEBUG" "📊 Acesso validado para $PROJECT_ID"
-      else
-        log "WARN" "⚠️ SA autenticada mas sem acesso total em $PROJECT_ID"
-      fi
-
       log "INFO" "▶️ Executando Prowler GCP para $PROJECT_ID..."
       if prowler gcp \
           --project-id "$PROJECT_ID" \
-          -M json-asff \
-          --output-filename "prowler-gcp-${PROJECT_ID}.json" \
+          --compliance cis_4.0_gcp iso27001_2022_gcp mitre_attack_gcp prowler_threatscore_gcp soc2_gcp \
+          --output-formats csv html json-asff \
+          --output-filename "prowler-gcp-${PROJECT_ID}" \
           --output-directory "$OUTPUT_DIR" \
           --skip-api-check \
           --no-banner \
-          --log-level INFO; then
-        log "INFO" "✅ Scan concluído para $PROJECT_ID"
+          --log-level "$LOG_LEVEL"; then
+        log "INFO" "✅ Scan GCP concluído para $PROJECT_ID"
       else
         log "WARN" "⚠️ Falha parcial no scan de $PROJECT_ID"
       fi
