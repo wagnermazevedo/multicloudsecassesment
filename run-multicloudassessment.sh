@@ -195,7 +195,7 @@ fi
 TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
 S3_PATH="s3://${S3_BUCKET}/${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/${TIMESTAMP}/"
 
-if aws s3 cp "$OUTPUT_DIR" "$S3_PATH" --recursive --only-show-errors; then
+if aws s3 cp "$OUTPUT_DIR" "$S3_PATH" --recursive --only-show-errors --acl bucket-owner-full-control; then
   log "INFO" "☁️ Relatórios enviados com sucesso para $S3_PATH"
 else
   log "WARN" "⚠️ Falha no upload para S3 (verifique permissões)."
