@@ -3,6 +3,7 @@
 # Base: Imagem oficial do Prowler com Python e Pyenv pré-configurado
 # =======================================================
 FROM public.ecr.aws/prowler-cloud/prowler:latest
+ARG BUILD_ID
 
 LABEL maintainer="Wagner Azevedo"
 LABEL description="Prowler MultiCloud Runner com suporte AWS, Azure, GCP e M365"
