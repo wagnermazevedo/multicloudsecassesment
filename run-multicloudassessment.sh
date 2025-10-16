@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner - v4.1.6-rev1 (Corrigido)
+# MultiCloud Security Assessment Runner - v4.1.6-rev2 (fixed)
 # Autor: Wagner Azevedo
 # Criado em: 2025-10-16T00:29:00Z
 # Alterações nesta revisão:
@@ -18,7 +18,7 @@ SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 START_TS=$(date +%s)
 
-VERSION_REV="v4.1.6-rev1-161025-1535-fixed"
+VERSION_REV="v4.1.6-rev2-$START_TIME"
 
 echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner $VERSION_REV (criado em $CREATED_AT)"
 
@@ -117,7 +117,8 @@ authenticate() {
 
       log "INFO" "✅ Autenticação AWS concluída. Executando Prowler..."
       prowler aws \
-        -M csv html json-asff \
+        ---output-formats csv html json-asff \
+        --compliance aws_well_architected_framework_reliability_pillar_aws aws_well_architected_framework_security_pillar_aws iso27001_2022_aws mitre_attack_aws nist_800_53_revision_5_aws prowler_threatscore_aws soc2_aws \
         --output-filename "multicloudassessment-aws-${ACCOUNT_ID}.json" \
         --output-directory "$OUTPUT_DIR" \
         --no-banner \
@@ -147,7 +148,8 @@ authenticate() {
       log "INFO" "▶️ Executando Prowler Azure..."
       prowler azure \
         --sp-env-auth \
-        -M csv html json-asff \
+        --output-formats csv html json-asff \
+        --compliance cis_4.0_azure iso27001_2022_azure  mitre_attack_azure prowler_threatscore_azure soc2_azure \
         --output-filename "multicloudassessment-azure-${ACCOUNT_ID}.json" \
         --output-directory "$OUTPUT_DIR" \
         --no-banner \
@@ -185,7 +187,8 @@ authenticate() {
       log "INFO" "▶️ Executando Prowler GCP..."
       prowler gcp \
         --project-id "$ACCOUNT_ID" \
-        -M csv html json-asff \
+        --output-formats csv html json-asff \
+        --compliance cis_4.0_gcp iso27001_2022_gcp  mitre_attack_gcp prowler_threatscore_gcp soc2_gcp \
         --output-filename "multicloudassessment-gcp-${ACCOUNT_ID}.json" \
         --output-directory "$OUTPUT_DIR" \
         --skip-api-check \
