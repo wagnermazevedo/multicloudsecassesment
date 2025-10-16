@@ -20,7 +20,11 @@ phases:
 
   build:
     commands:
+      - echo "=== [BUILD] Limpando cache local do Docker ==="
+      - docker builder prune -af || true
       - echo "=== [BUILD] Construindo imagem ==="
+      - GIT_HASH=$(git rev-parse --short HEAD)
+      - echo "🔹 Commit hash: $GIT_HASH"
       - docker build --no-cache --build-arg BUILD_ID=$GIT_HASH -t multicloud-prowler-repo:latest -f Dockerfile .
       - docker tag multicloud-prowler-repo:latest $ECR_REPO:latest
 
