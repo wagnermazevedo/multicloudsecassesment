@@ -51,6 +51,9 @@ RUN VENV_PATH=$(find /home/prowler/.cache/pypoetry/virtualenvs -type d -name "pr
 COPY run-prowler.sh /usr/local/bin/run-prowler.sh
 COPY run-multicloudassessment.sh /usr/local/bin/run-multicloudassessment.sh
 
+COPY run-multicloud-wrapper.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/run-multicloud-wrapper.sh
+
 COPY entrypoint.sh   /usr/local/bin/entrypoint.sh
 RUN dos2unix /usr/local/bin/run-prowler.sh /usr/local/bin/entrypoint.sh  /usr/local/bin/run-multicloudassessment.sh && \
     chmod +x /usr/local/bin/run-prowler.sh /usr/local/bin/entrypoint.sh /usr/local/bin/run-multicloudassessment.sh
