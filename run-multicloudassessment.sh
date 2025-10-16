@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.6-rev2
+# MultiCloud Security Assessment Runner v4.1.6-rev3
 # Autor: Wagner Azevedo
 # Criado em: 2025-10-16T00:29:00Z
 # Alterações nesta revisão:
@@ -63,6 +63,7 @@ get_ssm_value() {
 # ============================================================
 
 authenticate() {
+    
     aws)
       log "INFO" "☁️ Iniciando autenticação AWS..."
       ACCESS_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access"
