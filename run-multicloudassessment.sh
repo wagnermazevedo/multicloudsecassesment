@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.6-rev1-161025-1110
+# MultiCloud Security Assessment Runner v4.1.6-rev1-161025-1409
 # Autor: Wagner Azevedo
 # Criado em: 2025-10-16T00:29:00Z
 # Alterações nesta revisão:
@@ -21,9 +21,29 @@ START_TS=$(date +%s)
 echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.6-rev1 (criado em $CREATED_AT)"
 
 # === Variáveis obrigatórias ===
-CLIENT_NAME="${CLIENT_NAME:-${1:-unknown}}"
-CLOUD_PROVIDER="${CLOUD_PROVIDER:-${2:-unknown}}"
-ACCOUNT_ID="${ACCOUNT_ID:-${3:-undefined}}"
+#CLIENT_NAME="${CLIENT_NAME:-${1:-unknown}}"
+#CLOUD_PROVIDER="${CLOUD_PROVIDER:-${2:-unknown}}"
+#ACCOUNT_ID="${ACCOUNT_ID:-${3:-undefined}}"
+
+if [[ $# -ge 1 && -n "${1:-}" ]]; then
+  CLIENT_NAME="$1"
+else
+  CLIENT_NAME="${CLIENT_NAME:-unknown}"
+fi
+
+if [[ $# -ge 2 && -n "${2:-}" ]]; then
+  CLOUD_PROVIDER="$2"
+else
+  CLOUD_PROVIDER="${CLOUD_PROVIDER:-unknown}"
+fi
+
+if [[ $# -ge 3 && -n "${3:-}" ]]; then
+  ACCOUNT_ID="$3"
+else
+  ACCOUNT_ID="${ACCOUNT_ID:-undefined}"
+fi
+
+
 AWS_REGION="${AWS_REGION:-us-east-1}"
 S3_BUCKET="${S3_BUCKET:-multicloud-assessments}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
@@ -208,6 +228,7 @@ aws sts get-caller-identity --output text | awk '{print "🆔 Conta ativa para u
 
 # Executa o upload com controle de propriedade do bucket
 echo "Upload dos artefatos no caminho $PATH"
+cd /
 if aws s3 cp "$OUTPUT_DIR/" "$S3_PATH" \
     --recursive \
     --only-show-errors \
