@@ -133,6 +133,7 @@ authenticate() {
 
       log "INFO" "▶️ Executando Prowler Azure..."
       prowler azure \
+        --sp-env-auth \
         -M csv html json-asff \
         --output-filename "multicloudassessment-azure-${ACCOUNT_ID}.json" \
         --output-directory "$OUTPUT_DIR" \
