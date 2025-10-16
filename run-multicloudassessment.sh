@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.6-rev3
+# MultiCloud Security Assessment Runner v4.1.6-rev4
 # Autor: Wagner Azevedo
 # Criado em: 2025-10-16T00:29:00Z
 # Alterações nesta revisão:
@@ -183,6 +183,10 @@ aws)
         --log-level "$LOG_LEVEL" || log "WARN" "⚠️ Falha parcial no scan GCP"
       rm -f "$TMP_KEY" || true
       ;;
+  *)
+    log "ERROR" "❌ Provedor inválido: $CLOUD_PROVIDER"
+    return 1
+    ;;
   esac
 }
 
