@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.6-rev1-161025-1409
+# MultiCloud Security Assessment Runner 
 # Autor: Wagner Azevedo
 # Criado em: 2025-10-16T00:29:00Z
 # Alterações nesta revisão:
@@ -18,7 +18,9 @@ SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 START_TS=$(date +%s)
 
-echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.6-rev1-161025-1409 (criado em $CREATED_AT)"
+VERSION_REV="v4.1.6-rev1-161025-1501"
+
+echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner $VERSION_REV (criado em $CREATED_AT)"
 
 # === Variáveis obrigatórias ===
 #CLIENT_NAME="${CLIENT_NAME:-${1:-unknown}}"
