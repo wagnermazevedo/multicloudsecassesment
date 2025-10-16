@@ -6,15 +6,21 @@ echo "[ENTRYPOINT] 🔹 Inicializando container em $(date -u +"%Y-%m-%dT%H:%M:%S
 # ==============================
 # Detectar provider e variáveis obrigatórias
 # ==============================
-required_vars=("CLIENT_NAME" "CLOUD_PROVIDER" "ACCOUNT_ID" "S3_BUCKET")
+required_vars=("CLIENT_NAME" "CLOUD_PROVIDER" "ACCOUNT_ID")
 for var in "${required_vars[@]}"; do
   if [ -z "${!var:-}" ]; then
-    echo "[ENTRYPOINT] ⚠️ Variável ${var} ausente — usando valor padrão temporário."
-    export "$var"="undefined"
+    echo "[ENTRYPOINT] ❌ Variável obrigatória '${var}' não definida. Abortando."
+    exit 1
   fi
 done
 
 CLOUD_PROVIDER=$(echo "$CLOUD_PROVIDER" | tr '[:upper:]' '[:lower:]')
+
+echo "[ENTRYPOINT] 🌐 Variáveis de ambiente recebidas:"
+echo "  CLIENT_NAME=$CLIENT_NAME"
+echo "  CLOUD_PROVIDER=$CLOUD_PROVIDER"
+echo "  ACCOUNT_ID=$ACCOUNT_ID"
+echo "  S3_BUCKET=${S3_BUCKET:-multicloud-assessments}"
 
 # ==============================
 # Funções utilitárias
