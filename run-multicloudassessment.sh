@@ -11,6 +11,7 @@
 # ============================================================
 
 set -euo pipefail
+set +u 
 export LANG=C.UTF-8
 
 CREATED_AT="2025-10-16T00:29:00Z"
@@ -18,7 +19,7 @@ SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 START_TS=$(date +%s)
 
-VERSION_REV="v4.1.6-rev1-161025-1501"
+VERSION_REV="v4.1.6-rev1-161025-1517"
 
 echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner $VERSION_REV (criado em $CREATED_AT)"
 
@@ -45,6 +46,7 @@ else
   ACCOUNT_ID="${ACCOUNT_ID:-undefined}"
 fi
 
+set -u
 
 AWS_REGION="${AWS_REGION:-us-east-1}"
 S3_BUCKET="${S3_BUCKET:-multicloud-assessments}"
