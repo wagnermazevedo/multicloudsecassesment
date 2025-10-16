@@ -31,7 +31,7 @@ else
   CLIENT_NAME="${CLIENT_NAME:-unknown}"
 fi
 
-if [[ $# -ge 2 && -n "${2:-}" ]]; then
+if [[ $# -ge 2 && -n "${2-}" ]]; then
   CLOUD_PROVIDER="$2"
 else
   CLOUD_PROVIDER="${CLOUD_PROVIDER:-unknown}"
