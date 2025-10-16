@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.6-rev1
+# MultiCloud Security Assessment Runner v4.1.6-rev1-161025-1110
 # Autor: Wagner Azevedo
 # Criado em: 2025-10-16T00:29:00Z
 # Alterações nesta revisão:
@@ -65,19 +65,44 @@ get_ssm_value() {
 authenticate() {
   case "$CLOUD_PROVIDER" in
     aws)
-      log "INFO" "☁️ Iniciando autenticação AWS..."
-      ACCESS_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access"
-      ACCESS_RAW="$(get_ssm_value "$ACCESS_PATH")"
-      [[ -z "$ACCESS_RAW" ]] && { log "ERROR" "❌ Credenciais AWS não encontradas em $ACCESS_PATH"; return 1; }
+      log "INFO" "☁️ Iniciando autenticação AWS (modo regeneração automática de token)..."
 
-      CLEAN_JSON="$(echo "$ACCESS_RAW" | jq -r 'fromjson? // .')"
-      export AWS_ACCESS_KEY_ID="$(echo "$CLEAN_JSON" | jq -r '.AWS_ACCESS_KEY_ID // empty')"
-      export AWS_SECRET_ACCESS_KEY="$(echo "$CLEAN_JSON" | jq -r '.AWS_SECRET_ACCESS_KEY // empty')"
-      export AWS_SESSION_TOKEN="$(echo "$CLEAN_JSON" | jq -r '.AWS_SESSION_TOKEN // empty')"
+      ROLE_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/role"
+      ROLE_ARN="$(get_ssm_value "$ROLE_PATH")"
+
+      if [[ -z "$ROLE_ARN" ]]; then
+        log "ERROR" "❌ Nenhum Role ARN encontrado em $ROLE_PATH. Abortando execução."
+        return 1
+      fi
+
+      log "INFO" "🔑 Gerando novas credenciais temporárias via STS assume-role..."
+      CREDS_JSON="$(aws sts assume-role \
+        --role-arn "$ROLE_ARN" \
+        --role-session-name "MulticloudAssessment-${SESSION_ID}" \
+        --duration-seconds 3600)"
+
+      export AWS_ACCESS_KEY_ID="$(echo "$CREDS_JSON" | jq -r '.Credentials.AccessKeyId')"
+      export AWS_SECRET_ACCESS_KEY="$(echo "$CREDS_JSON" | jq -r '.Credentials.SecretAccessKey')"
+      export AWS_SESSION_TOKEN="$(echo "$CREDS_JSON" | jq -r '.Credentials.SessionToken')"
       export AWS_DEFAULT_REGION="$AWS_REGION"
-      log "INFO" "✅ Autenticação AWS concluída."
 
-      log "INFO" "▶️ Executando Prowler AWS..."
+      UPDATED_CREDS_JSON=$(jq -n \
+        --arg id "$AWS_ACCESS_KEY_ID" \
+        --arg secret "$AWS_SECRET_ACCESS_KEY" \
+        --arg token "$AWS_SESSION_TOKEN" \
+        '{AWS_ACCESS_KEY_ID:$id, AWS_SECRET_ACCESS_KEY:$secret, AWS_SESSION_TOKEN:$token}')
+
+      if aws ssm put-parameter \
+          --name "/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access" \
+          --value "$UPDATED_CREDS_JSON" \
+          --type "SecureString" \
+          --overwrite >/dev/null 2>&1; then
+        log "INFO" "💾 Novo token STS gravado com sucesso em SSM (overwrite realizado)."
+      else
+        log "WARN" "⚠️ Falha ao atualizar token STS no SSM (verifique permissões)."
+      fi
+
+      log "INFO" "✅ Autenticação AWS concluída. Executando Prowler..."
       prowler aws \
         -M csv html json-asff \
         --output-filename "multicloudassessment-aws-${ACCOUNT_ID}.json" \
@@ -85,6 +110,7 @@ authenticate() {
         --no-banner \
         --log-level "$LOG_LEVEL" || log "WARN" "⚠️ Falha parcial no scan AWS"
       ;;
+
 
     azure)
       log "INFO" "☁️ Iniciando autenticação Azure..."
