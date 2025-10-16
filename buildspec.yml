@@ -21,7 +21,8 @@ phases:
   build:
     commands:
       - echo "=== [BUILD] Construindo imagem ==="
-      - docker build --no-cache --build-arg BUILD_ID=$GIT_HASH -t multicloud-prowler-repo:latest -f Dockerfile .
+      - docker build prune -af || true
+      - docker build --no-cache  -t multicloud-prowler-repo:latest -f Dockerfile .
       - docker tag multicloud-prowler-repo:latest $ECR_REPO:latest
 
 
@@ -32,6 +33,8 @@ phases:
       - echo "=== [VERIFY] Validando imagem ==="
       - aws ecr describe-images --repository-name multicloud-prowler-repo --region $AWS_DEFAULT_REGION --query 'imageDetails[].imageTags'
       - echo "Build completo e imagem enviada com sucesso."
+      - echo "=== [VERIFY] Versão interna do runner ==="
+      - docker run --rm multicloud-prowler-repo:latest head -n 3 /usr/local/bin/run-multicloudassessment.sh
 
 artifacts:
   files:
