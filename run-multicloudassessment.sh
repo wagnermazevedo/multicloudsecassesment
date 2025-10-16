@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.6-rev7
+# MultiCloud Security Assessment Runner v4.1.6-rev3
 # Autor: Wagner Azevedo
 # Criado em: 2025-10-16T00:29:00Z
 # Alterações nesta revisão:
@@ -20,14 +20,13 @@ START_TS=$(date +%s)
 
 echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.6-rev1 (criado em $CREATED_AT)"
 
-# === Variáveis obrigatórias === (original)
+# === Variáveis obrigatórias ===
 CLIENT_NAME="${CLIENT_NAME:-${1:-unknown}}"
 CLOUD_PROVIDER="${CLOUD_PROVIDER:-${2:-unknown}}"
 ACCOUNT_ID="${ACCOUNT_ID:-${3:-undefined}}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 S3_BUCKET="${S3_BUCKET:-multicloud-assessments}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
-
 
 OUTPUT_DIR="/tmp/output-${SESSION_ID}"
 mkdir -p "$OUTPUT_DIR"
@@ -64,57 +63,47 @@ get_ssm_value() {
 # ============================================================
 
 authenticate() {
- case "$CLOUD_PROVIDER" in    
-aws)
-  log "INFO" "☁️ Iniciando autenticação AWS (modo regeneração por execução)..."
+    
+    aws)
+      log "INFO" "☁️ Iniciando autenticação AWS..."
+      ACCESS_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access"
+      ACCESS_RAW="$(get_ssm_value "$ACCESS_PATH")"
+      [[ -z "$ACCESS_RAW" ]] && { log "ERROR" "❌ Credenciais AWS não encontradas em $ACCESS_PATH"; return 1; }
 
-  ROLE_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/role"
-  ROLE_ARN="$(get_ssm_value "$ROLE_PATH")"
-  if [[ -z "$ROLE_ARN" ]]; then
-    log "ERROR" "❌ Nenhum Role ARN encontrado em $ROLE_PATH. Abortando execução."
-    return 1
-  fi
+      CLEAN_JSON="$(echo "$ACCESS_RAW" | jq -r 'fromjson? // .')"
+      export AWS_ACCESS_KEY_ID="$(echo "$CLEAN_JSON" | jq -r '.AWS_ACCESS_KEY_ID // empty')"
+      export AWS_SECRET_ACCESS_KEY="$(echo "$CLEAN_JSON" | jq -r '.AWS_SECRET_ACCESS_KEY // empty')"
+      export AWS_SESSION_TOKEN="$(echo "$CLEAN_JSON" | jq -r '.AWS_SESSION_TOKEN // empty')"
+      export AWS_DEFAULT_REGION="$AWS_REGION"
+      log "INFO" "✅ Autenticação AWS concluída."
 
-  log "INFO" "🔑 Solicitando novo token temporário via STS assume-role..."
-  CREDS_JSON="$(aws sts assume-role --role-arn "$ROLE_ARN" --role-session-name "MulticloudAssessment-$(date +%s)" --duration-seconds 3600)"
+      # ============================================================
+      # === Fallback STS automático (revalidação de token) ===
+      # ============================================================
+      if ! aws sts get-caller-identity >/dev/null 2>&1; then
+        log "WARN" "⚠️ Token AWS inválido ou expirado. Tentando gerar novo via STS assume-role..."
+        ROLE_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/role"
+        ROLE_ARN="$(get_ssm_value "$ROLE_PATH")"
+        if [[ -z "$ROLE_ARN" ]]; then
+          log "ERROR" "❌ Nenhum Role ARN encontrado em $ROLE_PATH. Não é possível gerar novo token."
+          return 1
+        fi
+        CREDS_JSON="$(aws sts assume-role --role-arn "$ROLE_ARN" --role-session-name "MulticloudAssessment" --duration-seconds 3600)"
+        export AWS_ACCESS_KEY_ID="$(echo "$CREDS_JSON" | jq -r '.Credentials.AccessKeyId')"
+        export AWS_SECRET_ACCESS_KEY="$(echo "$CREDS_JSON" | jq -r '.Credentials.SecretAccessKey')"
+        export AWS_SESSION_TOKEN="$(echo "$CREDS_JSON" | jq -r '.Credentials.SessionToken')"
+        log "INFO" "🔑 Novo token STS gerado e aplicado com sucesso."
+      fi
+      # ============================================================
 
-  export AWS_ACCESS_KEY_ID="$(echo "$CREDS_JSON" | jq -r '.Credentials.AccessKeyId')"
-  export AWS_SECRET_ACCESS_KEY="$(echo "$CREDS_JSON" | jq -r '.Credentials.SecretAccessKey')"
-  export AWS_SESSION_TOKEN="$(echo "$CREDS_JSON" | jq -r '.Credentials.SessionToken')"
-  export AWS_DEFAULT_REGION="$AWS_REGION"
-
-  # ============================================================
-  # 🔁 Atualiza o token no SSM (overwrite automático)
-  # ============================================================
-  UPDATED_CREDS_JSON=$(jq -n \
-    --arg id "$AWS_ACCESS_KEY_ID" \
-    --arg secret "$AWS_SECRET_ACCESS_KEY" \
-    --arg token "$AWS_SESSION_TOKEN" \
-    '{AWS_ACCESS_KEY_ID:$id, AWS_SECRET_ACCESS_KEY:$secret, AWS_SESSION_TOKEN:$token}')
-
-  if aws ssm put-parameter \
-      --name "/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access" \
-      --value "$UPDATED_CREDS_JSON" \
-      --type "SecureString" \
-      --overwrite >/dev/null 2>&1; then
-    log "INFO" "💾 Token STS atualizado com sucesso em SSM."
-  else
-    log "WARN" "⚠️ Falha ao atualizar token STS no SSM (verifique permissões)."
-  fi
-
-  # ============================================================
-  # Executa o scan com credenciais válidas
-  # ============================================================
-  log "INFO" "▶️ Executando Prowler AWS com token recém-gerado..."
-  prowler aws \
-    --output-formats csv html json-asff \
-    --compliance aws_well_architected_framework_reliability_pillar_aws aws_well_architected_framework_security_pillar_aws iso27001_2022_aws mitre_attack_aws nist_800_53_revision_5_aws prowler_threatscore_aws soc2_aws \
-    --output-filename "multicloudassessment-aws-${ACCOUNT_ID}.json" \
-    --output-directory "$OUTPUT_DIR" \
-    --no-banner \
-    --log-level "$LOG_LEVEL" || log "WARN" "⚠️ Falha parcial no scan AWS"
-  ;;
-
+      log "INFO" "▶️ Executando Prowler AWS..."
+      prowler aws \
+        -M json-asff \
+        --output-filename "multicloudassessment-aws-${ACCOUNT_ID}.json" \
+        --output-directory "$OUTPUT_DIR" \
+        --no-banner \
+        --log-level "$LOG_LEVEL" || log "WARN" "⚠️ Falha parcial no scan AWS"
+      ;;
 
 
     azure)
@@ -138,9 +127,7 @@ aws)
 
       log "INFO" "▶️ Executando Prowler Azure..."
       prowler azure \
-        --sp-env-auth \
-        --output-formats csv html json-asff \
-        --compliance cis_4.0_azure iso27001_2022_azure  mitre_attack_azure prowler_threatscore_azure soc2_azure \
+        -M csv html json-asff \
         --output-filename "multicloudassessment-azure-${ACCOUNT_ID}.json" \
         --output-directory "$OUTPUT_DIR" \
         --no-banner \
@@ -178,8 +165,7 @@ aws)
       log "INFO" "▶️ Executando Prowler GCP..."
       prowler gcp \
         --project-id "$ACCOUNT_ID" \
-        --output-formats csv html json-asff \
-        --compliance cis_4.0_gcp iso27001_2022_gcp  mitre_attack_gcp prowler_threatscore_gcp soc2_gcp \
+        -M csv html json-asff \
         --output-filename "multicloudassessment-gcp-${ACCOUNT_ID}.json" \
         --output-directory "$OUTPUT_DIR" \
         --skip-api-check \
@@ -187,10 +173,6 @@ aws)
         --log-level "$LOG_LEVEL" || log "WARN" "⚠️ Falha parcial no scan GCP"
       rm -f "$TMP_KEY" || true
       ;;
-  *)
-    log "ERROR" "❌ Provedor inválido: $CLOUD_PROVIDER"
-    return 1
-    ;;
   esac
 }
 
