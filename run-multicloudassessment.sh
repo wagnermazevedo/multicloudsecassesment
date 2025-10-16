@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.6-rev5
+# MultiCloud Security Assessment Runner v4.1.6-rev6
 # Autor: Wagner Azevedo
 # Criado em: 2025-10-16T00:29:00Z
 # Alterações nesta revisão:
@@ -108,7 +108,8 @@ aws)
   # ============================================================
   log "INFO" "▶️ Executando Prowler AWS com token recém-gerado..."
   prowler aws \
-    -M json-asff \
+    --output-formats csv html json-asff \
+    --compliance aws_well_architected_framework_reliability_pillar_aws aws_well_architected_framework_security_pillar_aws iso27001_2022_aws mitre_attack_aws nist_800_53_revision_5_aws prowler_threatscore_aws soc2_aws \
     --output-filename "multicloudassessment-aws-${ACCOUNT_ID}.json" \
     --output-directory "$OUTPUT_DIR" \
     --no-banner \
@@ -139,7 +140,8 @@ aws)
       log "INFO" "▶️ Executando Prowler Azure..."
       prowler azure \
         --sp-env-auth \
-        -M csv html json-asff \
+        --output-formats csv html json-asff \
+        --compliance cis_4.0_azure iso27001_2022_azure  mitre_attack_azure prowler_threatscore_azure soc2_azure \
         --output-filename "multicloudassessment-azure-${ACCOUNT_ID}.json" \
         --output-directory "$OUTPUT_DIR" \
         --no-banner \
@@ -177,7 +179,8 @@ aws)
       log "INFO" "▶️ Executando Prowler GCP..."
       prowler gcp \
         --project-id "$ACCOUNT_ID" \
-        -M csv html json-asff \
+        --output-formats csv html json-asff \
+        --compliance cis_4.0_gcp iso27001_2022_gcp  mitre_attack_gcp prowler_threatscore_gcp soc2_gcp \
         --output-filename "multicloudassessment-gcp-${ACCOUNT_ID}.json" \
         --output-directory "$OUTPUT_DIR" \
         --skip-api-check \
