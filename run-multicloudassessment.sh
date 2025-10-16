@@ -195,11 +195,25 @@ fi
 TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
 S3_PATH="s3://${S3_BUCKET}/${CLIENT_NAME}/${CLOUD_PROVIDER}/${ACCOUNT_ID}/${TIMESTAMP}/"
 
-if aws s3 cp "$OUTPUT_DIR" "$S3_PATH" --recursive --only-show-errors --acl bucket-owner-full-control; then
+# === Restaura credenciais originais do ECS (origem) ===
+log "INFO" "♻️ Revertendo credenciais para a conta de origem (ECS Task Role) para upload no S3..."
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+
+# Diagnóstico opcional — exibe qual conta está ativa agora
+aws sts get-caller-identity --output text | awk '{print "🆔 Conta ativa para upload:", $2}' || true
+
+# Executa o upload com controle de propriedade do bucket
+echo "Upload dos artefatos no caminho $PATH"
+if aws s3 cp "$OUTPUT_DIR/" "$S3_PATH" \
+    --recursive \
+    --only-show-errors \
+    --acl bucket-owner-full-control \
+    --expected-bucket-owner "057959860487"; then
   log "INFO" "☁️ Relatórios enviados com sucesso para $S3_PATH"
 else
   log "WARN" "⚠️ Falha no upload para S3 (verifique permissões)."
 fi
+
 
 END_TS=$(date +%s)
 DURATION=$((END_TS - START_TS))
