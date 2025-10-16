@@ -1,3 +1,6 @@
+# MultiCloud Assessment Runner
+# build-id: 20251016-1435
+
 FROM public.ecr.aws/prowler-cloud/prowler:latest
 LABEL maintainer="Wagner Azevedo"
 LABEL description="Prowler MultiCloud Runner com suporte AWS, Azure, GCP e M365"
