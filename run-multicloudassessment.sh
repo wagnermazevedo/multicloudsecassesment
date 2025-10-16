@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.6-rev6
+# MultiCloud Security Assessment Runner v4.1.6-rev7
 # Autor: Wagner Azevedo
 # Criado em: 2025-10-16T00:29:00Z
 # Alterações nesta revisão:
@@ -20,11 +20,10 @@ START_TS=$(date +%s)
 
 echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner v4.1.6-rev1 (criado em $CREATED_AT)"
 
-# === Variáveis obrigatórias ===
-# === Variáveis obrigatórias (corrigido) ===
-CLIENT_NAME="${1:-${CLIENT_NAME:-undefined}}"
-CLOUD_PROVIDER="${2:-${CLOUD_PROVIDER:-undefined}}"
-ACCOUNT_ID="${3:-${ACCOUNT_ID:-undefined}}"
+# === Variáveis obrigatórias === (original)
+CLIENT_NAME="${CLIENT_NAME:-${1:-unknown}}"
+CLOUD_PROVIDER="${CLOUD_PROVIDER:-${2:-unknown}}"
+ACCOUNT_ID="${ACCOUNT_ID:-${3:-undefined}}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 S3_BUCKET="${S3_BUCKET:-multicloud-assessments}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
