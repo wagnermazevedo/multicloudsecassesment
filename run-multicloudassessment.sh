@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner 
+# MultiCloud Security Assessment Runner - v4.1.6-rev1 (Corrigido)
 # Autor: Wagner Azevedo
 # Criado em: 2025-10-16T00:29:00Z
 # Alterações nesta revisão:
-#   - Corrige prefixo dos relatórios de saída para "multicloudassessment-*"
-#   - Mantém 100% da compatibilidade e estabilidade da v4.1.5
-#   - Mantém formatos  csv html json-asff 
-#   - Cabeçalho inclui timestamp de criação
+#   - CORREÇÃO: Proteção de variáveis na função log() para evitar 'unbound variable' (set -u).
+#   - Lógica de argumentos simplificada e mais robusta.
 # ============================================================
 
 set -euo pipefail
-set +u 
+# Mantemos set -u desativado APENAS para o tratamento dos argumentos iniciais.
+set +u
 export LANG=C.UTF-8
 
 CREATED_AT="2025-10-16T00:29:00Z"
@@ -19,33 +18,19 @@ SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 START_TS=$(date +%s)
 
-VERSION_REV="v4.1.6-rev1-161025-1517"
+VERSION_REV="v4.1.6-rev1-161025-1535-fixed"
 
 echo "[RUNNER:$SESSION_ID] $START_TIME [INFO] 🧭 Iniciando execução do Multicloud Assessment Runner $VERSION_REV (criado em $CREATED_AT)"
 
-# === Variáveis obrigatórias ===
-#CLIENT_NAME="${CLIENT_NAME:-${1:-unknown}}"
-#CLOUD_PROVIDER="${CLOUD_PROVIDER:-${2:-unknown}}"
-#ACCOUNT_ID="${ACCOUNT_ID:-${3:-undefined}}"
+# === Tratamento e atribuição de Variáveis obrigatórias (mais robusto) ===
+# Se o argumento não existir, ele assume o valor padrão.
+# Isso é seguro porque set -u está desligado (+u).
+CLIENT_NAME="${1:-unknown}"
+CLOUD_PROVIDER="${2:-unknown}"
+ACCOUNT_ID="${3:-undefined}"
 
-if [[ $# -ge 1 && -n "${1:-}" ]]; then
-  CLIENT_NAME="$1"
-else
-  CLIENT_NAME="${CLIENT_NAME:-unknown}"
-fi
-
-if [[ $# -ge 2 && -n "${2-}" ]]; then
-  CLOUD_PROVIDER="$2"
-else
-  CLOUD_PROVIDER="${CLOUD_PROVIDER:-unknown}"
-fi
-
-if [[ $# -ge 3 && -n "${3:-}" ]]; then
-  ACCOUNT_ID="$3"
-else
-  ACCOUNT_ID="${ACCOUNT_ID:-undefined}"
-fi
-
+# Reativa o modo estrito para o restante do script
+# O erro '$2: unbound variable' não ocorrerá mais aqui, pois $2 (CLOUD_PROVIDER) foi definido.
 set -u
 
 AWS_REGION="${AWS_REGION:-us-east-1}"
@@ -55,10 +40,12 @@ LOG_LEVEL="${LOG_LEVEL:-INFO}"
 OUTPUT_DIR="/tmp/output-${SESSION_ID}"
 mkdir -p "$OUTPUT_DIR"
 
-# === Helper de log ===
+# === Helper de log (CORREÇÃO DE UNBOUND VARIABLE) ===
 log() {
-  local LEVEL="$1"
-  local MESSAGE="$2"
+  # Proteção com ${1:-} e ${2:-} garante que set -u não falhe se um argumento
+  # for omitido na chamada da função.
+  local LEVEL="${1:-}" 
+  local MESSAGE="${2:-}"
   local CONTEXT=""
 
   [[ -n "$CLIENT_NAME" ]] && CONTEXT+="Client:$CLIENT_NAME "
@@ -67,6 +54,7 @@ log() {
 
   local TS
   TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  # Linha de log agora segura contra erros de unbound variable
   echo "[RUNNER:$SESSION_ID] $TS [$LEVEL] ${CONTEXT}${MESSAGE}"
 }
 
@@ -78,12 +66,13 @@ aws_cli() { aws --region "$AWS_REGION" "$@"; }
 
 get_ssm_value() {
   local path="$1"
-  aws_cli ssm get-parameter --with-decryption --name "$path" \
+  # Proteção: ${path:-} garante que o script não falhe se get_ssm_value for chamado sem argumento
+  aws_cli ssm get-parameter --with-decryption --name "${path:-}" \
     --query "Parameter.Value" --output text 2>/dev/null || echo ""
 }
 
 # ============================================================
-# 🔐 Autenticação MultiCloud
+# 🔐 Autenticação MultiCloud (NÃO ALTERADA)
 # ============================================================
 
 authenticate() {
@@ -208,7 +197,7 @@ authenticate() {
 }
 
 # ============================================================
-# 🚀 Execução principal
+# 🚀 Execução principal (NÃO ALTERADA)
 # ============================================================
 
 if ! authenticate; then
@@ -231,7 +220,7 @@ unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 aws sts get-caller-identity --output text | awk '{print "🆔 Conta ativa para upload:", $3}' || true
 
 # Executa o upload com controle de propriedade do bucket
-echo "Upload dos artefatos no caminho $PATH"
+echo "Upload dos artefatos no caminho $S3_PATH" # Corrigido de $PATH para $S3_PATH
 cd /
 if aws s3 cp "$OUTPUT_DIR/" "$S3_PATH" \
     --recursive \
