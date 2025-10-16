@@ -102,10 +102,10 @@ main() {
 
   configure_virtualenv_path
 
-  echo "[ENTRYPOINT] ✅ Ambiente preparado. Executando runner..."
+  echo "[ENTRYPOINT] ✅ Ambiente preparado. Executando wrapper e runner..."
   if [ -x /usr/local/bin/run-multicloudassessment.sh ]; then
     chmod +x /usr/local/bin/run-multicloudassessment.sh
-    /usr/local/bin/run-multicloudassessment.sh || {
+    /usr/local/bin/run-multicloud-wrapper.sh || {
       echo "[ENTRYPOINT] ❌ Falha ao executar runner."
       exit 1
     }
