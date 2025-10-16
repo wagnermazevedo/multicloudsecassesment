@@ -63,7 +63,7 @@ get_ssm_value() {
 # ============================================================
 
 authenticate() {
-    
+  case "$CLOUD_PROVIDER" in
     aws)
       log "INFO" "☁️ Iniciando autenticação AWS..."
       ACCESS_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/credentials/access"
