@@ -26,16 +26,14 @@ phases:
       - docker build --no-cache --build-arg BUILD_ID=$GIT_HASH -t multicloud-prowler-repo:latest -f Dockerfile .
       - docker tag multicloud-prowler-repo:latest $ECR_REPO:latest
 
-
   post_build:
     commands:
       - echo "=== [PUSH] Enviando imagem ao ECR ==="
       - docker push $ECR_REPO:latest
       - echo "=== [VERIFY] Validando imagem ==="
       - aws ecr describe-images --repository-name multicloud-prowler-repo --region $AWS_DEFAULT_REGION --query 'imageDetails[].imageTags'
-      - echo "Build completo e imagem enviada com sucesso."
+      - echo "=== ✅ Build completo e imagem enviada com sucesso. ==="
 
 artifacts:
   files:
     - '**/*'
-
