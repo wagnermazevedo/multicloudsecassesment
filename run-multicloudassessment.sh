@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# MultiCloud Security Assessment Runner v4.1.6-rev3
+# MultiCloud Security Assessment Runner v4.1.6-rev1
 # Autor: Wagner Azevedo
 # Criado em: 2025-10-16T00:29:00Z
 # Alterações nesta revisão:
@@ -77,34 +77,14 @@ authenticate() {
       export AWS_DEFAULT_REGION="$AWS_REGION"
       log "INFO" "✅ Autenticação AWS concluída."
 
-      # ============================================================
-      # === Fallback STS automático (revalidação de token) ===
-      # ============================================================
-      if ! aws sts get-caller-identity >/dev/null 2>&1; then
-        log "WARN" "⚠️ Token AWS inválido ou expirado. Tentando gerar novo via STS assume-role..."
-        ROLE_PATH="/clients/$CLIENT_NAME/aws/$ACCOUNT_ID/role"
-        ROLE_ARN="$(get_ssm_value "$ROLE_PATH")"
-        if [[ -z "$ROLE_ARN" ]]; then
-          log "ERROR" "❌ Nenhum Role ARN encontrado em $ROLE_PATH. Não é possível gerar novo token."
-          return 1
-        fi
-        CREDS_JSON="$(aws sts assume-role --role-arn "$ROLE_ARN" --role-session-name "MulticloudAssessment" --duration-seconds 3600)"
-        export AWS_ACCESS_KEY_ID="$(echo "$CREDS_JSON" | jq -r '.Credentials.AccessKeyId')"
-        export AWS_SECRET_ACCESS_KEY="$(echo "$CREDS_JSON" | jq -r '.Credentials.SecretAccessKey')"
-        export AWS_SESSION_TOKEN="$(echo "$CREDS_JSON" | jq -r '.Credentials.SessionToken')"
-        log "INFO" "🔑 Novo token STS gerado e aplicado com sucesso."
-      fi
-      # ============================================================
-
       log "INFO" "▶️ Executando Prowler AWS..."
       prowler aws \
-        -M json-asff \
+        -M csv html json-asff \
         --output-filename "multicloudassessment-aws-${ACCOUNT_ID}.json" \
         --output-directory "$OUTPUT_DIR" \
         --no-banner \
         --log-level "$LOG_LEVEL" || log "WARN" "⚠️ Falha parcial no scan AWS"
       ;;
-
 
     azure)
       log "INFO" "☁️ Iniciando autenticação Azure..."
