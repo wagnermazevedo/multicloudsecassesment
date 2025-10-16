@@ -44,4 +44,4 @@ ENV PATH="/home/prowler/.cache/pypoetry/virtualenvs/prowler-NnJNioq7-py3.12/bin:
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /home/prowler
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["/bin/bash","/usr/local/bin/entrypoint.sh"]
