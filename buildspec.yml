@@ -22,7 +22,9 @@ phases:
     commands:
       - echo "=== [BUILD] Limpando cache local do Docker ==="
       - docker builder prune -af || true
-      - docker build --no-cache --build-arg BUILD_ID=$GIT_HASH -t multicloud-prowler-repo:latest -f Dockerfile .
+      - docker image prune -af || true
+      - docker system prune -af || true
+      - docker build --pull --no-cache -t multicloud-prowler-repo:latest -f Dockerfile .
       - docker tag multicloud-prowler-repo:latest $ECR_REPO:latest
 
   post_build:
