@@ -105,7 +105,7 @@ main() {
   echo "[ENTRYPOINT] ✅ Ambiente preparado. Executando wrapper e runner..."
   if [ -x /usr/local/bin/run-multicloudassessment.sh ]; then
     chmod +x /usr/local/bin/run-multicloudassessment.sh
-    /usr/local/bin/run-multicloud-wrapper.sh || {
+    exec /usr/local/bin/run-multicloud-wrapper.sh "$CLIENT_NAME" "$CLOUD_PROVIDER" "$ACCOUNT_ID" || {
       echo "[ENTRYPOINT] ❌ Falha ao executar runner."
       exit 1
     }
