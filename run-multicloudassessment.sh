@@ -207,8 +207,7 @@ echo "Upload dos artefatos no caminho $PATH"
 if aws s3 cp "$OUTPUT_DIR/" "$S3_PATH" \
     --recursive \
     --only-show-errors \
-    --acl bucket-owner-full-control \
-    --expected-bucket-owner "057959860487"; then
+    --acl bucket-owner-full-control \ ; then
   log "INFO" "☁️ Relatórios enviados com sucesso para $S3_PATH"
 else
   log "WARN" "⚠️ Falha no upload para S3 (verifique permissões)."
